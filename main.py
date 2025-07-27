@@ -375,6 +375,31 @@ class RSIScalpingBot:
                 if len(valid_pairs) >= 7:
                     break
             
+            # Log détaillé des paires sélectionnées
+            if valid_pairs:
+                pairs_list = ", ".join(valid_pairs)
+                detailed_message = f"🎯 PAIRES SÉLECTIONNÉES: {pairs_list}"
+                self.logger.info(detailed_message)
+                
+                if self.firebase_logger:
+                    await self.firebase_logger.log_console_mirror('INFO', detailed_message, 'pair_scanner')
+                
+                # Log des critères de sélection pour chaque paire
+                for pair in valid_pairs:
+                    ticker = await self.data_fetcher.get_ticker(pair)
+                    if ticker:
+                        volume_usdc = float(ticker.get('quoteVolume', 0))
+                        price_change = float(ticker.get('priceChangePercent', 0))
+                        price = float(ticker.get('lastPrice', 0))
+                        
+                        pair_details = (f"📈 {pair}: Volume={volume_usdc:,.0f} USDC, "
+                                      f"Change={price_change:+.2f}%, Prix={price:.6f}")
+                        self.logger.info(pair_details)
+                        
+                        if self.firebase_logger:
+                            await self.firebase_logger.log_console_mirror('INFO', pair_details, 'pair_details')
+            
+            # Résumé global
             message = f"📊 {len(valid_pairs)} paires sélectionnées pour analyse ({rejected_count} rejetées)"
             self.logger.info(message)
             
@@ -464,6 +489,22 @@ class RSIScalpingBot:
             # Vérification: minimum 4 conditions sur 5
             signal_strength = len(conditions_met)
             is_valid_signal = signal_strength >= 4
+            
+            # Log détaillé des calculs pour cette paire
+            calc_details = (f"📊 {pair} INDICATEURS: RSI={current_rsi:.1f}, "
+                          f"EMA9={ema9_value:.6f}, EMA21={ema21_value:.6f}, "
+                          f"Volume={current_volume/volume_ma_value:.1f}x, "
+                          f"Prix={current_price:.6f}")
+            
+            if self.firebase_logger:
+                await self.firebase_logger.log_console_mirror('INFO', calc_details, 'indicators')
+            
+            # Log des conditions remplies
+            if conditions_met:
+                conditions_str = " | ".join(conditions_met)
+                conditions_log = f"✅ {pair} CONDITIONS ({signal_strength}/6): {conditions_str}"
+                if self.firebase_logger:
+                    await self.firebase_logger.log_console_mirror('INFO', conditions_log, 'conditions')
             
             analysis_data = {
                 'pair': pair,
@@ -769,21 +810,56 @@ class RSIScalpingBot:
                 if len(self.open_positions) < self.config.MAX_OPEN_POSITIONS:
                     pairs_to_analyze = await self.scan_pairs()
                     
+                    if pairs_to_analyze:
+                        analysis_summary = f"🔍 DÉBUT D'ANALYSE: {len(pairs_to_analyze)} paires à examiner"
+                        self.logger.info(analysis_summary)
+                        if self.firebase_logger:
+                            await self.firebase_logger.log_console_mirror('INFO', analysis_summary, 'analysis')
+                    
+                    signals_found = 0
                     for pair in pairs_to_analyze:
                         # Éviter les paires déjà en position
                         if pair in self.open_positions:
+                            skip_msg = f"⏭️ {pair}: Déjà en position - IGNORÉ"
+                            self.logger.info(skip_msg)
+                            if self.firebase_logger:
+                                await self.firebase_logger.log_console_mirror('INFO', skip_msg, 'analysis')
                             continue
+                        
+                        # Log début d'analyse
+                        start_msg = f"🔬 ANALYSE {pair}: Calcul des indicateurs..."
+                        self.logger.info(start_msg)
+                        if self.firebase_logger:
+                            await self.firebase_logger.log_console_mirror('INFO', start_msg, 'analysis')
                         
                         # Analyse de la paire
                         is_signal, analysis_data = await self.analyze_pair(pair)
                         
+                        # Log résultat de l'analyse
                         if is_signal:
+                            signals_found += 1
+                            signal_msg = f"🎯 SIGNAL DÉTECTÉ sur {pair}! RSI: {analysis_data.get('rsi', 'N/A'):.1f}"
+                            self.logger.info(signal_msg)
+                            if self.firebase_logger:
+                                await self.firebase_logger.log_console_mirror('INFO', signal_msg, 'signals')
+                            
                             # Tentative d'achat
                             success = await self.execute_buy_order(pair, analysis_data)
                             if success:
                                 # Attendre un peu avant le prochain trade
                                 await asyncio.sleep(10)
                                 break
+                        else:
+                            no_signal_msg = f"❌ {pair}: Pas de signal - RSI: {analysis_data.get('rsi', 'N/A'):.1f}"
+                            self.logger.info(no_signal_msg)
+                            if self.firebase_logger:
+                                await self.firebase_logger.log_console_mirror('INFO', no_signal_msg, 'analysis')
+                    
+                    # Résumé de l'analyse
+                    summary_msg = f"📋 RÉSUMÉ ANALYSE: {signals_found} signaux trouvés sur {len(pairs_to_analyze)} paires"
+                    self.logger.info(summary_msg)
+                    if self.firebase_logger:
+                        await self.firebase_logger.log_console_mirror('INFO', summary_msg, 'analysis')
                 
                 # Attente avant le prochain cycle
                 await asyncio.sleep(40)
