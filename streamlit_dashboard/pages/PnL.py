@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(
     page_title="P&L - Satochi Bot",
@@ -36,10 +37,9 @@ class PnLPage:
         st.markdown("### 🔥 P&L RÉEL - AUCUNE SIMULATION")
         st.markdown("---")
         
-        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
-        auto_refresh = st.checkbox("Auto-refresh", value=False, key="pnl_auto_refresh")
-        if auto_refresh:
-            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
+        # Auto-refresh automatique toutes les 20 secondes pour P&L
+        count = st_autorefresh(interval=20000, key="pnl_autorefresh")
+        st.success(f"🔄 Auto-refresh P&L - Actualisation #{count} (toutes les 20s)")
         
         try:
             # Récupération données RÉELLES

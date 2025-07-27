@@ -10,6 +10,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 from datetime import datetime, timedelta
 import numpy as np
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(
     page_title="Analytics - Satochi Bot",
@@ -36,10 +37,9 @@ class AnalyticsPage:
         st.markdown("### 🔥 ANALYSES RÉELLES - AUCUNE SIMULATION")
         st.markdown("---")
         
-        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
-        auto_refresh = st.checkbox("Auto-refresh", value=False, key="analytics_auto_refresh")
-        if auto_refresh:
-            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
+        # Auto-refresh automatique toutes les 30 secondes pour Analytics
+        count = st_autorefresh(interval=30000, key="analytics_autorefresh")
+        st.success(f"🔄 Auto-refresh Analytics - Actualisation #{count} (toutes les 30s)")
         
         try:
             # Récupération données RÉELLES

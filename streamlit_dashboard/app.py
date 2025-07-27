@@ -37,18 +37,13 @@ class SatochiDashboard:
     def run(self):
         """Lance l'interface dashboard avec DONNÉES RÉELLES FIREBASE"""
         
-        # Auto-refresh contrôlé par l'utilisateur
-        with st.sidebar:
-            enable_auto_refresh = st.checkbox("🔄 Auto-refresh (30s)", value=False, key="main_auto_refresh")
-        
-        if enable_auto_refresh:
-            # Auto-refresh toutes les 30 secondes
-            st_autorefresh(interval=30000, key="dashboard_refresh")
-            st.info("🔄 Auto-refresh activé - Page actualisée toutes les 30 secondes")
+        # Auto-refresh automatique toutes les 30 secondes pour le dashboard principal
+        count = st_autorefresh(interval=30000, key="dashboard_autorefresh")
         
         # Sidebar avec contrôles
         with st.sidebar:
             st.title("🚀 Satochi Bot")
+            st.success(f"🔄 Auto-refresh #{count} (30s)")
             st.markdown("---")
             
             # Statut du bot RÉEL depuis Firebase
