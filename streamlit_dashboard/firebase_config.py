@@ -259,9 +259,9 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - COPIE EXACTE DU TEST FORCE QUI FONCTIONNE"""
+        """Récupère les logs depuis Firebase - CORRECTION TIMESTAMP DatetimeWithNanoseconds"""
         try:
-            # COPIE EXACTE de la logique TEST FORCE qui fonctionne
+            # COPIE EXACTE de la logique TEST DIRECT qui fonctionne
             logs_ref = self.db.collection('rsi_scalping_logs')
             sample_logs = logs_ref.limit(limit).stream()
             
@@ -270,31 +270,42 @@ class StreamlitFirebaseConfig:
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
                 
-                # Conversion timestamp EXACTEMENT comme dans TEST FORCE
+                # CORRECTION: Conversion timestamp DatetimeWithNanoseconds
                 if 'timestamp' in log_dict and log_dict['timestamp']:
                     try:
-                        if hasattr(log_dict['timestamp'], 'isoformat'):
-                            log_dict['timestamp'] = log_dict['timestamp'].isoformat()
+                        timestamp_obj = log_dict['timestamp']
+                        # Gérer DatetimeWithNanoseconds spécifiquement
+                        if str(type(timestamp_obj)).find('DatetimeWithNanoseconds') != -1:
+                            # Convertir en datetime standard puis en string ISO
+                            log_dict['timestamp'] = timestamp_obj.replace(tzinfo=None).isoformat()
+                        elif hasattr(timestamp_obj, 'isoformat'):
+                            log_dict['timestamp'] = timestamp_obj.isoformat()
                         else:
-                            log_dict['timestamp'] = str(log_dict['timestamp'])
-                    except:
+                            log_dict['timestamp'] = str(timestamp_obj)
+                    except Exception as ts_error:
+                        # Si conversion échoue, garder comme string brut
                         log_dict['timestamp'] = str(log_dict['timestamp'])
+                        st.warning(f"⚠️ Erreur conversion timestamp: {ts_error}")
                 
                 sample_data.append(log_dict)
             
-            # Filtrage côté client APRÈS récupération complète (comme TEST FORCE)
+            # DEBUG: Afficher le nombre de logs avant/après filtrage
+            st.info(f"🔍 DEBUG: {len(sample_data)} logs récupérés avant filtrage (level={level})")
+            
+            # Filtrage côté client APRÈS récupération complète
             if level != 'ALL':
                 filtered_data = []
                 for log in sample_data:
                     if log.get('level', '') == level:
                         filtered_data.append(log)
                 sample_data = filtered_data
+                st.info(f"🔍 DEBUG: {len(sample_data)} logs après filtrage par niveau '{level}'")
             
             # Tri par timestamp
             try:
                 sample_data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-            except:
-                pass
+            except Exception as sort_error:
+                st.warning(f"⚠️ Erreur tri timestamp: {sort_error}")
             
             return sample_data
             

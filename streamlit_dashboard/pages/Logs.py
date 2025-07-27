@@ -81,6 +81,28 @@ class LogsPage:
                     except Exception as e:
                         st.error(f"❌ get_logs_data() failed: {e}")
             
+            # BOUTON TEST SANS CONVERSION TIMESTAMP
+            if st.button("🔬 TEST SANS CONVERSION TIMESTAMP"):
+                st.markdown("### 🧪 TEST SANS CONVERSION")
+                try:
+                    logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+                    raw_logs = logs_ref.limit(5).stream()
+                    
+                    raw_data = []
+                    for log in raw_logs:
+                        log_dict = log.to_dict()
+                        log_dict['id'] = log.id
+                        # AUCUNE conversion timestamp - garde brut
+                        raw_data.append(log_dict)
+                    
+                    st.success(f"✅ SANS CONVERSION: {len(raw_data)} logs")
+                    if raw_data:
+                        st.json(raw_data[0])
+                    else:
+                        st.error("❌ SANS CONVERSION: Aucun log")
+                except Exception as e:
+                    st.error(f"❌ SANS CONVERSION failed: {e}")
+            
             if not logs_data:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")
