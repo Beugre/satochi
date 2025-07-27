@@ -261,48 +261,48 @@ class StreamlitFirebaseConfig:
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
         """Récupère les logs depuis Firebase - VERSION DEBUG ULTRA DÉTAILLÉE"""
         try:
-            st.info(f"🔍 DÉBUT get_logs_data: level={level}, limit={limit}")
+            st.write("🔍 DÉBUT get_logs_data:", level, limit)
             
             # COPIE EXACTE du test SANS CONVERSION qui fonctionne
             logs_ref = self.db.collection('rsi_scalping_logs')
-            st.info("✅ Collection référence créée")
+            st.write("✅ Collection référence créée")
             
             raw_logs = logs_ref.limit(limit).stream()
-            st.info("✅ Query stream créé")
+            st.write("✅ Query stream créé")
             
             raw_data = []
             count = 0
             for log in raw_logs:
                 count += 1
-                st.info(f"📄 Traitement log #{count}")
+                st.write(f"📄 Traitement log #{count}")
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
                 # AUCUNE conversion timestamp - on garde tout brut
                 raw_data.append(log_dict)
-                st.info(f"✅ Log #{count} ajouté: keys={list(log_dict.keys())}")
+                st.write(f"✅ Log #{count} ajouté: keys={list(log_dict.keys())}")
             
-            st.info(f"🔍 TOTAL récupéré: {len(raw_data)} logs")
+            st.write(f"🔍 TOTAL récupéré: {len(raw_data)} logs")
             
             # Filtrage côté client APRÈS récupération complète
             if level != 'ALL':
-                st.info(f"🔍 Filtrage par niveau: {level}")
+                st.write(f"🔍 Filtrage par niveau: {level}")
                 filtered_data = []
                 for i, log in enumerate(raw_data):
                     log_level = log.get('level', '')
-                    st.info(f"Log {i}: level='{log_level}' (recherché: '{level}')")
+                    st.write(f"Log {i}: level='{log_level}' (recherché: '{level}')")
                     if log_level == level:
                         filtered_data.append(log)
-                        st.info(f"✅ Log {i} correspond au filtre")
+                        st.write(f"✅ Log {i} correspond au filtre")
                 raw_data = filtered_data
-                st.info(f"🔍 APRÈS filtrage: {len(raw_data)} logs")
+                st.write(f"🔍 APRÈS filtrage: {len(raw_data)} logs")
             
-            st.info(f"🎯 RETOUR FINAL: {len(raw_data)} logs")
+            st.write(f"🎯 RETOUR FINAL: {len(raw_data)} logs")
             return raw_data
             
         except Exception as e:
-            st.error(f"❌ EXCEPTION dans get_logs_data: {e}")
+            st.write(f"❌ EXCEPTION dans get_logs_data: {e}")
             import traceback
-            st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            st.write(f"🔍 TRACEBACK: {traceback.format_exc()}")
             return []
     
     def debug_collections(self) -> dict:

@@ -119,6 +119,45 @@ class LogsPage:
                     import traceback
                     st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
             
+            # BOUTON TEST BYPASS CLASSE - ACCÈS DIRECT
+            if st.button("🔥 TEST BYPASS CLASSE"):
+                st.markdown("### 🧪 BYPASS COMPLET DE LA CLASSE")
+                try:
+                    st.info("🚀 Accès direct à self.firebase_config.db")
+                    
+                    # Test 1: Vérifier que db existe
+                    if self.firebase_config.db is None:
+                        st.error("❌ self.firebase_config.db est None!")
+                        return
+                    else:
+                        st.success("✅ self.firebase_config.db existe")
+                    
+                    # Test 2: Accès direct sans méthode
+                    st.info("🔍 Accès direct à la collection...")
+                    direct_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+                    st.success("✅ Collection référence obtenue")
+                    
+                    st.info("🔍 Exécution de limit(3).stream()...")
+                    direct_stream = direct_ref.limit(3).stream()
+                    st.success("✅ Stream obtenu")
+                    
+                    st.info("🔍 Itération sur le stream...")
+                    bypass_data = []
+                    for i, doc in enumerate(direct_stream):
+                        st.info(f"📄 Document #{i+1} trouvé: ID={doc.id}")
+                        doc_dict = doc.to_dict()
+                        st.info(f"📄 Keys: {list(doc_dict.keys())}")
+                        bypass_data.append(doc_dict)
+                    
+                    st.success(f"🎯 BYPASS RÉSULTAT: {len(bypass_data)} logs")
+                    if bypass_data:
+                        st.json(bypass_data[0])
+                    
+                except Exception as e:
+                    st.error(f"❌ BYPASS failed: {e}")
+                    import traceback
+                    st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            
             if not logs_data:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")
