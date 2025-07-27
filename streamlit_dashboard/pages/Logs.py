@@ -73,22 +73,29 @@ class LogsPage:
         # Filtres de logs
         self._display_log_filters()
         
-        # Auto-refresh automatique toutes les 5 secondes
-        if getattr(self, 'auto_refresh', False):
-            # Utiliser streamlit-autorefresh pour un vrai auto-refresh
-            count = st_autorefresh(interval=5000, key="logs_autorefresh")
-            st.success(f"🔄 Auto-refresh activé - Actualisation #{count} (toutes les 5s)")
+        # Auto-refresh automatique TOUJOURS ACTIF
+        # Récupération en temps réel toutes les 5 secondes
+        count = st_autorefresh(interval=5000, key="logs_autorefresh")
+        
+        # Afficher le statut de l'auto-refresh
+        status_col1, status_col2 = st.columns([3, 1])
+        with status_col1:
+            st.success(f"🔄 AUTO-REFRESH TEMPS RÉEL - Actualisation #{count} - Toutes les 5 secondes")
+        with status_col2:
+            current_time = datetime.now(self.paris_tz).strftime("%H:%M:%S")
+            st.info(f"🕐 {current_time} Paris")
         
         try:
-            # RÉCUPÉRATION LOGS DIRECTE DANS LA PAGE
-            st.info("🔍 Récupération directe des logs...")
+            # RÉCUPÉRATION LOGS EN TEMPS RÉEL - TRIÉS PAR TIMESTAMP
+            st.info("🔍 Récupération logs en temps réel...")
             
-            # Au lieu d'utiliser get_logs_data(), faisons directement dans la page
+            # Récupération directe avec tri par timestamp décroissant
             logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
             selected_level = getattr(self, 'selected_level', 'ALL')
             logs_limit = getattr(self, 'logs_limit', 200)
             
-            direct_logs = logs_ref.limit(logs_limit).stream()
+            # Récupération avec ordre par timestamp (plus récents en premier)
+            direct_logs = logs_ref.order_by('timestamp', direction='DESCENDING').limit(logs_limit).stream()
             
             logs_data = []
             for log in direct_logs:
@@ -123,7 +130,7 @@ class LogsPage:
     
     def _display_log_filters(self):
         """Filtres pour les logs"""
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             self.selected_level = st.selectbox(
@@ -140,10 +147,7 @@ class LogsPage:
             )
         
         with col3:
-            self.auto_refresh = st.checkbox("Auto-refresh (5s)", value=False)
-        
-        with col4:
-            if st.button("🔄 Actualiser"):
+            if st.button("🔄 Actualiser maintenant"):
                 st.rerun()
     
     def _display_real_log_stats(self, logs_data):
@@ -288,12 +292,13 @@ class LogsPage:
                 else:
                     st.write(f"⚫ **[{time_display} Paris] {level}** `{module}` {message}")
                 
-                # Limiter l'affichage pour éviter la surcharge
-                if i >= 30:  # Afficher maximum 30 logs
+                # Limiter l'affichage pour éviter la surcharge  
+                if i >= 50:  # Afficher maximum 50 logs (augmenté de 30 à 50)
                     break
             
-            # Informations sur les données
-            st.success(f"📊 {len(sorted_logs)} logs trouvés | Affichage des 30 plus récents | 🕐 Tri: Plus récents en premier")
+            # Informations sur les données avec temps de dernière actualisation
+            current_time = datetime.now(self.paris_tz).strftime("%H:%M:%S")
+            st.success(f"📊 {len(sorted_logs)} logs trouvés | Affichage des 50 plus récents | 🕐 Dernière actualisation: {current_time} Paris | ⚡ Tri: Plus récents en premier")
             
             # Options d'export et refresh
             col1, col2, col3 = st.columns(3)
