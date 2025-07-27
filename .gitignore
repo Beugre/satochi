@@ -1,0 +1,43 @@
+# 🔐 SECRETS ET CREDENTIALS
+.env
+firebase-credentials.json
+config_secrets.py
+
+# 📊 DONNÉES ET LOGS
+logs/
+data/
+exports/
+*.log
+*.db
+
+# 🐍 PYTHON
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.coverage
+.pytest_cache/
+
+# 🧠 IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 📱 OS
+.DS_Store
+Thumbs.db
+*.tmp
+*.temp
+
+# 📦 DISTRIBUTION
+build/
+dist/
+*.egg-info/

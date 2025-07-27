@@ -1,0 +1,32 @@
+[Unit]
+Description=Satochi Bot - Binance Live Data Collector
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/satochi_bot
+ExecStart=/usr/bin/python3 /opt/satochi_bot/start_binance_live.py --daemon
+Restart=always
+RestartSec=10
+Environment=PYTHONPATH=/opt/satochi_bot
+
+# Limites de ressources
+MemoryLimit=512M
+CPUQuota=25%
+
+# Logging
+StandardOutput=append:/var/log/satochi-bot/binance-live.log
+StandardError=append:/var/log/satochi-bot/binance-live-error.log
+
+# Sécurité
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+# Dépendances
+Wants=satochi-tradebot.service
+
+[Install]
+WantedBy=multi-user.target
