@@ -19,11 +19,17 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Import depuis le répertoire parent (racine)
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
 # Import de la configuration Firebase
 try:
     from firebase_config import StreamlitFirebaseConfig
 except ImportError as e:
     st.error(f"❌ Erreur import firebase_config: {e}")
+    st.error(f"Tentative d'import depuis: {sys.path[0]}")
     st.stop()
 
 class SatochiDashboard:
