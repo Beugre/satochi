@@ -7,7 +7,8 @@ Logs système - AUCUNE DONNÉE TEST
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+import pytz
 
 st.set_page_config(
     page_title="Logs - Satochi Bot",
@@ -26,6 +27,39 @@ class LogsPage:
     
     def __init__(self):
         self.firebase_config = StreamlitFirebaseConfig()
+        self.paris_tz = pytz.timezone('Europe/Paris')
+    
+    def _convert_to_paris_time(self, timestamp):
+        """Convertit un timestamp Firebase vers l'heure de Paris"""
+        try:
+            # Si c'est un DatetimeWithNanoseconds Firebase
+            if str(type(timestamp)).find('DatetimeWithNanoseconds') != -1:
+                # Firebase timestamps sont en UTC
+                utc_dt = timestamp.replace(tzinfo=pytz.UTC)
+                paris_dt = utc_dt.astimezone(self.paris_tz)
+                return f"{paris_dt.hour:02d}:{paris_dt.minute:02d}:{paris_dt.second:02d}"
+            
+            # Si c'est une string ISO
+            elif isinstance(timestamp, str) and 'T' in timestamp:
+                # Parser la string ISO
+                if timestamp.endswith('Z'):
+                    utc_dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                elif '+' in timestamp:
+                    utc_dt = datetime.fromisoformat(timestamp)
+                else:
+                    utc_dt = datetime.fromisoformat(timestamp).replace(tzinfo=pytz.UTC)
+                
+                # Convertir vers Paris
+                paris_dt = utc_dt.astimezone(self.paris_tz)
+                return f"{paris_dt.hour:02d}:{paris_dt.minute:02d}:{paris_dt.second:02d}"
+            
+            # Fallback
+            else:
+                return str(timestamp)[:19]
+                
+        except Exception as e:
+            # En cas d'erreur, retourner timestamp brut
+            return str(timestamp)[:19]
     
     def run(self):
         """Logs basés UNIQUEMENT sur Firebase"""
@@ -112,7 +146,7 @@ class LogsPage:
         """Statistiques logs RÉELLES"""
         st.subheader("📊 Statistiques Logs (Firebase)")
         
-        col1, col2, col3, col4, col5 = st.columns(5)
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
         
         try:
             df = pd.DataFrame(logs_data)
@@ -129,12 +163,15 @@ class LogsPage:
             else:
                 errors = warnings = infos = debugs = 0
             
-            # Logs récents (dernière heure)
+            # Logs récents (dernière heure en heure de Paris)
             if 'timestamp' in df.columns:
                 try:
                     df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
-                    one_hour_ago = pd.Timestamp.now(tz='UTC') - timedelta(hours=1)
-                    recent_logs = len(df[df['timestamp'] > one_hour_ago])
+                    # Calculer une heure en arrière en UTC (pour Paris)
+                    paris_now = datetime.now(self.paris_tz)
+                    one_hour_ago_paris = paris_now - timedelta(hours=1)
+                    one_hour_ago_utc = one_hour_ago_paris.astimezone(pytz.UTC)
+                    recent_logs = len(df[df['timestamp'] > one_hour_ago_utc])
                 except Exception as e:
                     st.warning(f"⚠️ Erreur parsing timestamp: {e}")
                     recent_logs = 0
@@ -157,6 +194,9 @@ class LogsPage:
             
             with col5:
                 st.metric("🔍 Debug", debugs, delta="Traces")
+            
+            with col6:
+                st.metric("🕒 Récents (1h)", recent_logs, delta="Paris")
             
         except Exception as e:
             st.error(f"❌ Erreur stats logs: {e}")
@@ -225,22 +265,8 @@ class LogsPage:
                 # Format console: [TIMESTAMP] [LEVEL] MESSAGE
                 timestamp = log.get('timestamp', 'NO_TIME')
                 
-                # Gérer DatetimeWithNanoseconds brut
-                if str(type(timestamp)).find('DatetimeWithNanoseconds') != -1:
-                    try:
-                        # Extraire heure, minute, seconde du DatetimeWithNanoseconds
-                        time_display = f"{timestamp.hour:02d}:{timestamp.minute:02d}:{timestamp.second:02d}"
-                    except:
-                        time_display = str(timestamp)[:19]
-                elif isinstance(timestamp, str) and 'T' in timestamp:
-                    # Extraire juste la partie heure:minute:seconde
-                    try:
-                        dt_part = timestamp.split('T')[1].split('+')[0]  # Récupérer HH:MM:SS
-                        time_display = dt_part[:8]  # Garder HH:MM:SS
-                    except:
-                        time_display = timestamp[:19]  # Fallback
-                else:
-                    time_display = str(timestamp)[:19]
+                # Convertir vers l'heure de Paris
+                time_display = self._convert_to_paris_time(timestamp)
                 
                 level = log.get('level', 'INFO')
                 message = log.get('message', 'Pas de message')
@@ -248,15 +274,15 @@ class LogsPage:
                 
                 # Affichage avec bannière colorée selon le niveau
                 if level == 'ERROR':
-                    st.error(f"🔴 **[{time_display}] ERROR** `{module}` {message}")
+                    st.error(f"🔴 **[{time_display} Paris] ERROR** `{module}` {message}")
                 elif level == 'WARNING':
-                    st.warning(f"🟠 **[{time_display}] WARNING** `{module}` {message}")
+                    st.warning(f"🟠 **[{time_display} Paris] WARNING** `{module}` {message}")
                 elif level == 'INFO':
-                    st.info(f"🔵 **[{time_display}] INFO** `{module}` {message}")
+                    st.info(f"🔵 **[{time_display} Paris] INFO** `{module}` {message}")
                 elif level == 'DEBUG':
-                    st.write(f"⚪ **[{time_display}] DEBUG** `{module}` {message}")
+                    st.write(f"⚪ **[{time_display} Paris] DEBUG** `{module}` {message}")
                 else:
-                    st.write(f"⚫ **[{time_display}] {level}** `{module}` {message}")
+                    st.write(f"⚫ **[{time_display} Paris] {level}** `{module}` {message}")
                 
                 # Limiter l'affichage pour éviter la surcharge
                 if i >= 30:  # Afficher maximum 30 logs
