@@ -36,6 +36,11 @@ class ComparisonPage:
         st.markdown("### 🔥 COMPARAISONS RÉELLES - AUCUNE SIMULATION")
         st.markdown("---")
         
+        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
+        auto_refresh = st.checkbox("Auto-refresh", value=False, key="comparison_auto_refresh")
+        if auto_refresh:
+            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
+        
         try:
             # Récupération données RÉELLES
             trades_data = self.firebase_config.get_trades_data(limit=1000)

@@ -37,11 +37,9 @@ class LogsPage:
         # Filtres de logs
         self._display_log_filters()
         
-        # Auto-refresh
+        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
         if getattr(self, 'auto_refresh', False):
-            import time
-            time.sleep(5)  # Attendre 5 secondes
-            st.rerun()
+            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
         
         try:
             # RÉCUPÉRATION LOGS DIRECTE DANS LA PAGE

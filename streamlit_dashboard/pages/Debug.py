@@ -33,6 +33,11 @@ class DebugPage:
         st.markdown("### 🛠️ Diagnostic des logs Firebase")
         st.markdown("---")
         
+        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
+        auto_refresh = st.checkbox("Auto-refresh", value=False, key="debug_auto_refresh")
+        if auto_refresh:
+            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
+        
         # Test d'initialisation Firebase
         self._test_firebase_init()
         

@@ -37,6 +37,11 @@ class TradesPage:
         st.markdown("### 🔥 DONNÉES EN TEMPS RÉEL - AUCUNE SIMULATION")
         st.markdown("---")
         
+        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
+        auto_refresh = st.checkbox("Auto-refresh", value=False, key="trades_auto_refresh")
+        if auto_refresh:
+            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
+        
         # Récupération des données RÉELLES
         try:
             trades_data = self.firebase_config.get_trades_data(limit=200)

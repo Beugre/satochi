@@ -37,8 +37,14 @@ class SatochiDashboard:
     def run(self):
         """Lance l'interface dashboard avec DONNÉES RÉELLES FIREBASE"""
         
-        # Auto-refresh toutes les 30 secondes
-        st_autorefresh(interval=30000, key="dashboard_refresh")
+        # Auto-refresh contrôlé par l'utilisateur
+        with st.sidebar:
+            enable_auto_refresh = st.checkbox("🔄 Auto-refresh (30s)", value=False, key="main_auto_refresh")
+        
+        if enable_auto_refresh:
+            # Auto-refresh toutes les 30 secondes
+            st_autorefresh(interval=30000, key="dashboard_refresh")
+            st.info("🔄 Auto-refresh activé - Page actualisée toutes les 30 secondes")
         
         # Sidebar avec contrôles
         with st.sidebar:
