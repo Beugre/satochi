@@ -219,14 +219,30 @@ class StreamlitFirebaseConfig:
     def get_analytics_data(self, period_days: int = 30) -> dict:
         """Récupère les données d'analytics depuis Firebase - VRAIES COLLECTIONS"""
         try:
-            # Récupération des stats journalières du bot RSI
+            # Récupération des stats journalières du bot RSI (sans order_by)
             analytics_ref = self.db.collection('rsi_scalping_daily_stats')
-            analytics_docs = analytics_ref.order_by('date', direction=firestore.Query.DESCENDING).limit(period_days).stream()
+            analytics_docs = analytics_ref.limit(period_days).stream()
             
             analytics_data = []
             for doc in analytics_docs:
                 data = doc.to_dict()
+                # Conversion timestamp si nécessaire
+                if 'date' in data and data['date']:
+                    try:
+                        firebase_date = data['date']
+                        if hasattr(firebase_date, 'isoformat'):
+                            data['date'] = firebase_date.isoformat()
+                        else:
+                            data['date'] = str(firebase_date)
+                    except:
+                        data['date'] = str(data['date'])
                 analytics_data.append(data)
+            
+            # Tri côté client par date
+            try:
+                analytics_data.sort(key=lambda x: x.get('date', ''), reverse=True)
+            except:
+                pass
             
             return {
                 'daily_metrics': analytics_data,
