@@ -305,7 +305,15 @@ class LogsPage:
             for log in sorted_logs:
                 # Format console: [TIMESTAMP] [LEVEL] MESSAGE
                 timestamp = log.get('timestamp', 'NO_TIME')
-                if isinstance(timestamp, str) and 'T' in timestamp:
+                
+                # Gérer DatetimeWithNanoseconds brut
+                if str(type(timestamp)).find('DatetimeWithNanoseconds') != -1:
+                    try:
+                        # Extraire heure, minute, seconde du DatetimeWithNanoseconds
+                        time_display = f"{timestamp.hour:02d}:{timestamp.minute:02d}:{timestamp.second:02d}"
+                    except:
+                        time_display = str(timestamp)[:19]
+                elif isinstance(timestamp, str) and 'T' in timestamp:
                     # Extraire juste la partie heure:minute:seconde
                     try:
                         dt_part = timestamp.split('T')[1].split('+')[0]  # Récupérer HH:MM:SS
