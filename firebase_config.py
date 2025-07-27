@@ -76,13 +76,33 @@ class StreamlitFirebaseConfig:
         try:
             # Utilisation de la vraie collection du bot RSI Scalping Pro
             trades_ref = self.db.collection('rsi_scalping_trades')
-            trades = trades_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit).stream()
+            # Pas de tri par timestamp pour éviter les erreurs d'index
+            trades = trades_ref.limit(limit).stream()
             
             trades_data = []
             for trade in trades:
                 trade_dict = trade.to_dict()
                 trade_dict['id'] = trade.id
+                
+                # Conversion des timestamps Firebase
+                for timestamp_field in ['timestamp', 'entry_time', 'exit_time']:
+                    if timestamp_field in trade_dict and trade_dict[timestamp_field]:
+                        try:
+                            firebase_timestamp = trade_dict[timestamp_field]
+                            if hasattr(firebase_timestamp, 'isoformat'):
+                                trade_dict[timestamp_field] = firebase_timestamp.isoformat()
+                            else:
+                                trade_dict[timestamp_field] = str(firebase_timestamp)
+                        except:
+                            trade_dict[timestamp_field] = str(trade_dict[timestamp_field])
+                
                 trades_data.append(trade_dict)
+            
+            # Tri côté client
+            try:
+                trades_data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            except:
+                pass
             
             return trades_data
             
@@ -213,17 +233,39 @@ class StreamlitFirebaseConfig:
             logs_ref = self.db.collection('rsi_scalping_logs')
             
             if level != 'ALL':
-                logs_query = logs_ref.where('level', '==', level)
+                # Filtrer par niveau sans tri sur timestamp
+                logs_query = logs_ref.where('level', '==', level).limit(limit)
             else:
-                logs_query = logs_ref
+                # Récupérer tous les logs sans tri (le tri sera fait côté client)
+                logs_query = logs_ref.limit(limit)
             
-            logs = logs_query.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit).stream()
+            logs = logs_query.stream()
             
             logs_data = []
             for log in logs:
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
+                
+                # Conversion du timestamp Firebase en string
+                if 'timestamp' in log_dict and log_dict['timestamp']:
+                    try:
+                        # Conversion DatetimeWithNanoseconds vers ISO string
+                        firebase_timestamp = log_dict['timestamp']
+                        if hasattr(firebase_timestamp, 'isoformat'):
+                            log_dict['timestamp'] = firebase_timestamp.isoformat()
+                        else:
+                            log_dict['timestamp'] = str(firebase_timestamp)
+                    except Exception as e:
+                        # En cas d'erreur, garder le timestamp original
+                        log_dict['timestamp'] = str(log_dict['timestamp'])
+                
                 logs_data.append(log_dict)
+            
+            # Tri côté client par timestamp (du plus récent au plus ancien)
+            try:
+                logs_data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            except:
+                pass  # Si le tri échoue, on garde l'ordre original
             
             return logs_data
             
