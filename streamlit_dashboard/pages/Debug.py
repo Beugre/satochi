@@ -220,6 +220,5 @@ class DebugPage:
                 st.write("**Stack trace:**", str(e))
 
 # Lancement de la page
-if __name__ == "__main__":
-    page = DebugPage()
-    page.run()
+page = DebugPage()
+page.run()

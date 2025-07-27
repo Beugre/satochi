@@ -264,19 +264,19 @@ class StreamlitFirebaseConfig:
             # Utilisation de la vraie collection logs du bot RSI Scalping Pro
             logs_ref = self.db.collection('rsi_scalping_logs')
             
-            if level != 'ALL':
-                # Filtrer par niveau sans tri sur timestamp
-                logs_query = logs_ref.where('level', '==', level).limit(limit)
-            else:
-                # Récupérer tous les logs sans tri (le tri sera fait côté client)
-                logs_query = logs_ref.limit(limit)
-            
-            logs = logs_query.stream()
+            # Toujours récupérer tous les logs d'abord, puis filtrer côté client
+            logs = logs_ref.limit(limit).stream()
             
             logs_data = []
             for log in logs:
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
+                
+                # Filtrer par niveau côté client si nécessaire
+                if level != 'ALL':
+                    log_level = log_dict.get('level', '')
+                    if log_level != level:
+                        continue  # Ignorer ce log s'il ne correspond pas au niveau
                 
                 # Conversion du timestamp Firebase en string
                 if 'timestamp' in log_dict and log_dict['timestamp']:
