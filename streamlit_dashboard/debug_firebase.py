@@ -5,11 +5,6 @@ Test direct dans l'environnement Streamlit pour déboguer les logs
 """
 
 import streamlit as st
-import sys
-import os
-
-# Ajouter le répertoire parent au path
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 st.title("🔍 Debug Firebase - Test Direct")
 
@@ -76,23 +71,7 @@ try:
 
 except ImportError as e:
     st.error(f"❌ Erreur import firebase_config: {e}")
-    st.write(f"Chemin sys.path[0]: {sys.path[0]}")
-    st.write(f"Répertoire courant: {os.getcwd()}")
-    st.write(f"__file__: {__file__}")
-    st.write(f"Parent directory: {os.path.dirname(os.path.dirname(__file__))}")
-    
-    # Lister les fichiers dans le répertoire parent
-    parent_dir = os.path.dirname(os.path.dirname(__file__))
-    if os.path.exists(parent_dir):
-        files = os.listdir(parent_dir)
-        st.write(f"Fichiers dans {parent_dir}: {files}")
-        
-        # Vérifier si firebase_config.py existe
-        firebase_config_path = os.path.join(parent_dir, 'firebase_config.py')
-        if os.path.exists(firebase_config_path):
-            st.success(f"✅ firebase_config.py trouvé à: {firebase_config_path}")
-        else:
-            st.error(f"❌ firebase_config.py introuvable à: {firebase_config_path}")
+    st.info("Le fichier firebase_config.py doit être dans le même répertoire que ce script")
     
 except Exception as e:
     st.error(f"❌ Erreur générale: {e}")
