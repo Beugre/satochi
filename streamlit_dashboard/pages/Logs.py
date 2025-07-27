@@ -48,10 +48,57 @@ class LogsPage:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")
                 
-                # BUTTON DEBUG COLLECTIONS
+                # DEBUG DIRECT COLLECTIONS
                 if st.button("🔍 Debug: Voir les collections Firebase"):
-                    debug_info = self.firebase_config.debug_collections()
-                    st.json(debug_info)
+                    try:
+                        st.info("🔍 Inspection des collections Firebase...")
+                        
+                        # Lister toutes les collections
+                        collections = self.firebase_config.db.collections()
+                        collection_names = []
+                        
+                        for collection in collections:
+                            collection_names.append(collection.id)
+                        
+                        st.success(f"📋 Collections trouvées: {', '.join(collection_names)}")
+                        
+                        # Essayer la collection rsi_scalping_logs spécifiquement
+                        try:
+                            logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+                            sample_logs = logs_ref.limit(3).stream()
+                            
+                            sample_data = []
+                            for log in sample_logs:
+                                log_dict = log.to_dict()
+                                sample_data.append({
+                                    'id': log.id,
+                                    'keys': list(log_dict.keys()),
+                                    'data': log_dict
+                                })
+                            
+                            if sample_data:
+                                st.success(f"✅ Collection 'rsi_scalping_logs' trouvée avec {len(sample_data)} échantillons:")
+                                st.json(sample_data)
+                            else:
+                                st.warning("⚠️ Collection 'rsi_scalping_logs' existe mais est vide")
+                                
+                        except Exception as e:
+                            st.error(f"❌ Erreur accès rsi_scalping_logs: {e}")
+                        
+                        # Essayer d'autres collections potentielles
+                        for potential_collection in ['logs', 'bot_logs', 'satochi_logs', 'trading_logs']:
+                            try:
+                                test_ref = self.firebase_config.db.collection(potential_collection)
+                                test_docs = test_ref.limit(1).stream()
+                                for doc in test_docs:
+                                    st.info(f"✅ Collection '{potential_collection}' trouvée!")
+                                    st.json(doc.to_dict())
+                                    break
+                            except:
+                                continue
+                                
+                    except Exception as e:
+                        st.error(f"❌ Erreur debug: {e}")
                 return
             
             # Statistiques logs RÉELLES
