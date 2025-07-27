@@ -45,6 +45,7 @@ class TradingConfig:
     MAX_OPEN_POSITIONS: int = 2                 # Alias pour compatibilité (telegram_notifier)
     MIN_POSITION_SIZE_USDC: float = 50.0        # Taille min position
     MAX_POSITION_SIZE_USDC: float = 500.0       # Taille max position
+    MIN_CAPITAL_TO_TRADE: float = 100.0         # Capital minimum pour trader
     
     # 🎯 TAKE PROFIT / STOP LOSS
     TAKE_PROFIT_PERCENT: float = 0.9            # TP: +0.9%
