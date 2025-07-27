@@ -38,251 +38,33 @@ class LogsPage:
         self._display_log_filters()
         
         try:
-            # DÉBUT DEBUG EXPLICITE
-            st.sidebar.warning("🔍 DÉBUT récupération logs...")
+            # RÉCUPÉRATION LOGS DIRECTE DANS LA PAGE
+            st.info("🔍 Récupération directe des logs...")
             
-            # Récupération logs RÉELS avec méthode corrigée
-            st.sidebar.info(f"📞 Appel get_logs_data(level={getattr(self, 'selected_level', 'ALL')}, limit={getattr(self, 'logs_limit', 200)})")
+            # Au lieu d'utiliser get_logs_data(), faisons directement dans la page
+            logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+            selected_level = getattr(self, 'selected_level', 'ALL')
+            logs_limit = getattr(self, 'logs_limit', 200)
             
-            logs_data = self.firebase_config.get_logs_data(
-                level=getattr(self, 'selected_level', 'ALL'),
-                limit=getattr(self, 'logs_limit', 200)
-            )
+            direct_logs = logs_ref.limit(logs_limit).stream()
             
-            st.sidebar.info(f"📋 Résultat get_logs_data: {len(logs_data) if logs_data else 0} logs")
-            
-            # DEBUG: Vérifier le type de retour
-            if logs_data is None:
-                st.sidebar.error("❌ get_logs_data() retourne None!")
-            elif not isinstance(logs_data, list):
-                st.sidebar.error(f"❌ get_logs_data() retourne {type(logs_data)} au lieu de list!")
-            elif len(logs_data) == 0:
-                st.sidebar.warning("⚠️ get_logs_data() retourne une liste vide []")
-            else:
-                st.sidebar.success(f"✅ get_logs_data() retourne {len(logs_data)} logs valides")
-            
-            # BOUTON DE DEBUG TEMPORAIRE - COMPARAISON DIRECTE
-            if st.button("🔥 TEST DIRECT vs get_logs_data"):
-                st.markdown("### 🔍 COMPARAISON DIRECTE")
+            logs_data = []
+            for log in direct_logs:
+                log_dict = log.to_dict()
+                log_dict['id'] = log.id
                 
-                col1, col2 = st.columns(2)
+                # Filtrage par niveau si nécessaire
+                if selected_level != 'ALL':
+                    if log_dict.get('level', '') != selected_level:
+                        continue
                 
-                with col1:
-                    st.markdown("**🔥 TEST DIRECT (qui fonctionne):**")
-                    try:
-                        logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
-                        direct_logs = logs_ref.limit(5).stream()
-                        
-                        direct_data = []
-                        for log in direct_logs:
-                            log_dict = log.to_dict()
-                            direct_data.append(log_dict)
-                        
-                        st.success(f"✅ TEST DIRECT: {len(direct_data)} logs")
-                        if direct_data:
-                            st.json(direct_data[0])
-                        else:
-                            st.error("❌ TEST DIRECT: Aucun log")
-                    except Exception as e:
-                        st.error(f"❌ TEST DIRECT failed: {e}")
-                
-                with col2:
-                    st.markdown("**⚙️ get_logs_data():**")
-                    try:
-                        method_data = self.firebase_config.get_logs_data(limit=5)
-                        st.success(f"✅ get_logs_data(): {len(method_data)} logs")
-                        if method_data:
-                            st.json(method_data[0])
-                        else:
-                            st.error("❌ get_logs_data(): Aucun log")
-                    except Exception as e:
-                        st.error(f"❌ get_logs_data() failed: {e}")
+                logs_data.append(log_dict)
             
-            # BOUTON TEST SANS CONVERSION TIMESTAMP
-            if st.button("🔬 TEST SANS CONVERSION TIMESTAMP"):
-                st.markdown("### 🧪 TEST SANS CONVERSION")
-                try:
-                    logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
-                    raw_logs = logs_ref.limit(5).stream()
-                    
-                    raw_data = []
-                    for log in raw_logs:
-                        log_dict = log.to_dict()
-                        log_dict['id'] = log.id
-                        # AUCUNE conversion timestamp - garde brut
-                        raw_data.append(log_dict)
-                    
-                    st.success(f"✅ SANS CONVERSION: {len(raw_data)} logs")
-                    if raw_data:
-                        st.json(raw_data[0])
-                    else:
-                        st.error("❌ SANS CONVERSION: Aucun log")
-                except Exception as e:
-                    st.error(f"❌ SANS CONVERSION failed: {e}")
-            
-            # BOUTON TEST ISOLÉ get_logs_data()
-            if st.button("🔍 TEST ISOLÉ get_logs_data()"):
-                st.markdown("### 🧪 TEST ISOLÉ AVEC DEBUG COMPLET")
-                try:
-                    st.info("🚀 Appel direct de get_logs_data(level='ALL', limit=5)")
-                    isolated_data = self.firebase_config.get_logs_data(level='ALL', limit=5)
-                    st.success(f"🎯 RÉSULTAT: {len(isolated_data)} logs")
-                    if isolated_data:
-                        st.json(isolated_data[0])
-                    else:
-                        st.warning("⚠️ Résultat vide mais pas d'erreur")
-                except Exception as e:
-                    st.error(f"❌ TEST ISOLÉ failed: {e}")
-                    import traceback
-                    st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
-            
-            # BOUTON TEST BYPASS CLASSE - ACCÈS DIRECT
-            if st.button("🔥 TEST BYPASS CLASSE"):
-                st.markdown("### 🧪 BYPASS COMPLET DE LA CLASSE")
-                try:
-                    st.info("🚀 Accès direct à self.firebase_config.db")
-                    
-                    # Test 1: Vérifier que db existe
-                    if self.firebase_config.db is None:
-                        st.error("❌ self.firebase_config.db est None!")
-                        return
-                    else:
-                        st.success("✅ self.firebase_config.db existe")
-                    
-                    # Test 2: Accès direct sans méthode
-                    st.info("🔍 Accès direct à la collection...")
-                    direct_ref = self.firebase_config.db.collection('rsi_scalping_logs')
-                    st.success("✅ Collection référence obtenue")
-                    
-                    st.info("🔍 Exécution de limit(3).stream()...")
-                    direct_stream = direct_ref.limit(3).stream()
-                    st.success("✅ Stream obtenu")
-                    
-                    st.info("🔍 Itération sur le stream...")
-                    bypass_data = []
-                    for i, doc in enumerate(direct_stream):
-                        st.info(f"📄 Document #{i+1} trouvé: ID={doc.id}")
-                        doc_dict = doc.to_dict()
-                        st.info(f"📄 Keys: {list(doc_dict.keys())}")
-                        bypass_data.append(doc_dict)
-                    
-                    st.success(f"🎯 BYPASS RÉSULTAT: {len(bypass_data)} logs")
-                    if bypass_data:
-                        st.json(bypass_data[0])
-                    
-                except Exception as e:
-                    st.error(f"❌ BYPASS failed: {e}")
-                    import traceback
-                    st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
-            
-            # NOUVEAU TEST: APPEL DIRECT SANS get_logs_data()
-            if st.button("🆘 TEST DIRECT SANS MÉTHODE"):
-                st.markdown("### 🆘 TEST SANS PASSER PAR get_logs_data()")
-                
-                # Force un affichage dans la sidebar
-                st.sidebar.error("🆘 TEST DIRECT LANCÉ!")
-                
-                try:
-                    # Accès direct aux logs depuis la page
-                    logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
-                    direct_logs = logs_ref.limit(200).stream()
-                    
-                    direct_data = []
-                    for log in direct_logs:
-                        log_dict = log.to_dict()
-                        log_dict['id'] = log.id
-                        direct_data.append(log_dict)
-                    
-                    st.sidebar.success(f"🎯 LOGS DIRECTS: {len(direct_data)}")
-                    st.success(f"✅ DIRECT: {len(direct_data)} logs récupérés SANS get_logs_data()")
-                    
-                    if direct_data:
-                        # Afficher directement les stats
-                        st.markdown("### 📊 Statistiques DIRECTES")
-                        st.metric("Total Logs DIRECT", len(direct_data))
-                        
-                        # Afficher directement les logs en console
-                        st.markdown("### 📋 Console DIRECTE")
-                        
-                        for i, log in enumerate(direct_data[:10]):  # Afficher 10 premiers
-                            timestamp = log.get('timestamp', 'NO_TIME')
-                            level = log.get('level', 'INFO')
-                            message = log.get('message', 'Pas de message')
-                            
-                            # Couleur selon le niveau
-                            if level == 'ERROR':
-                                level_icon = "🔴"
-                            elif level == 'WARNING':
-                                level_icon = "🟠"
-                            elif level == 'INFO':
-                                level_icon = "🔵"
-                            else:
-                                level_icon = "⚪"
-                            
-                            st.markdown(f"`[{i+1}]` {level_icon} **{level}** {message}")
-                        
-                        st.info(f"📊 Affichage des 10 premiers logs sur {len(direct_data)} total")
-                    
-                except Exception as e:
-                    st.error(f"❌ TEST DIRECT failed: {e}")
-                    import traceback
-                    st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            st.success(f"✅ {len(logs_data)} logs récupérés directement!")
             
             if not logs_data:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")
-                
-                # DEBUG DIRECT COLLECTIONS
-                if st.button("🔍 Debug: Voir les collections Firebase"):
-                    try:
-                        st.info("🔍 Inspection des collections Firebase...")
-                        
-                        # Lister toutes les collections
-                        collections = self.firebase_config.db.collections()
-                        collection_names = []
-                        
-                        for collection in collections:
-                            collection_names.append(collection.id)
-                        
-                        st.success(f"📋 Collections trouvées: {', '.join(collection_names)}")
-                        
-                        # Essayer la collection rsi_scalping_logs spécifiquement
-                        try:
-                            logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
-                            sample_logs = logs_ref.limit(3).stream()
-                            
-                            sample_data = []
-                            for log in sample_logs:
-                                log_dict = log.to_dict()
-                                sample_data.append({
-                                    'id': log.id,
-                                    'keys': list(log_dict.keys()),
-                                    'data': log_dict
-                                })
-                            
-                            if sample_data:
-                                st.success(f"✅ Collection 'rsi_scalping_logs' trouvée avec {len(sample_data)} échantillons:")
-                                st.json(sample_data)
-                            else:
-                                st.warning("⚠️ Collection 'rsi_scalping_logs' existe mais est vide")
-                                
-                        except Exception as e:
-                            st.error(f"❌ Erreur accès rsi_scalping_logs: {e}")
-                        
-                        # Essayer d'autres collections potentielles
-                        for potential_collection in ['logs', 'bot_logs', 'satochi_logs', 'trading_logs']:
-                            try:
-                                test_ref = self.firebase_config.db.collection(potential_collection)
-                                test_docs = test_ref.limit(1).stream()
-                                for doc in test_docs:
-                                    st.info(f"✅ Collection '{potential_collection}' trouvée!")
-                                    st.json(doc.to_dict())
-                                    break
-                            except:
-                                continue
-                                
-                    except Exception as e:
-                        st.error(f"❌ Erreur debug: {e}")
                 return
             
             # Statistiques logs RÉELLES
