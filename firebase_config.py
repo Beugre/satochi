@@ -144,14 +144,30 @@ class StreamlitFirebaseConfig:
         """Récupère l'état de santé du bot depuis Firebase - VRAIES COLLECTIONS"""
         try:
             # Chercher dans les vraies collections du bot
-            # 1. Vérifier les logs récents
+            # 1. Vérifier les logs récents (sans order_by pour éviter les erreurs d'index)
             logs_ref = self.db.collection('rsi_scalping_logs')
-            recent_logs = logs_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(5).stream()
+            recent_logs = logs_ref.limit(5).stream()
             
             recent_log_data = []
             for log in recent_logs:
                 log_dict = log.to_dict()
+                # Conversion du timestamp Firebase
+                if 'timestamp' in log_dict and log_dict['timestamp']:
+                    try:
+                        firebase_timestamp = log_dict['timestamp']
+                        if hasattr(firebase_timestamp, 'isoformat'):
+                            log_dict['timestamp'] = firebase_timestamp.isoformat()
+                        else:
+                            log_dict['timestamp'] = str(firebase_timestamp)
+                    except:
+                        log_dict['timestamp'] = str(log_dict['timestamp'])
                 recent_log_data.append(log_dict)
+            
+            # Tri côté client par timestamp
+            try:
+                recent_log_data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+            except:
+                pass
             
             if recent_log_data:
                 latest_log = recent_log_data[0]
@@ -174,9 +190,9 @@ class StreamlitFirebaseConfig:
                         'recent_logs_count': len(recent_log_data)
                     }
             
-            # Si aucun log, chercher dans les trades récents
+            # Si aucun log, chercher dans les trades récents (sans order_by)
             trades_ref = self.db.collection('rsi_scalping_trades')
-            recent_trades = trades_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).stream()
+            recent_trades = trades_ref.limit(1).stream()
             
             for trade in recent_trades:
                 trade_dict = trade.to_dict()
