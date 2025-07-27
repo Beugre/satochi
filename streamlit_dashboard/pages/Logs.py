@@ -37,6 +37,12 @@ class LogsPage:
         # Filtres de logs
         self._display_log_filters()
         
+        # Auto-refresh
+        if getattr(self, 'auto_refresh', False):
+            import time
+            time.sleep(5)  # Attendre 5 secondes
+            st.rerun()
+        
         try:
             # RÉCUPÉRATION LOGS DIRECTE DANS LA PAGE
             st.info("🔍 Récupération directe des logs...")
@@ -127,9 +133,13 @@ class LogsPage:
             
             # Logs récents (dernière heure)
             if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                one_hour_ago = datetime.now() - timedelta(hours=1)
-                recent_logs = len(df[df['timestamp'] > one_hour_ago])
+                try:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+                    one_hour_ago = pd.Timestamp.now(tz='UTC') - timedelta(hours=1)
+                    recent_logs = len(df[df['timestamp'] > one_hour_ago])
+                except Exception as e:
+                    st.warning(f"⚠️ Erreur parsing timestamp: {e}")
+                    recent_logs = 0
             else:
                 recent_logs = 0
             
@@ -161,31 +171,35 @@ class LogsPage:
             df = pd.DataFrame(logs_data)
             
             if 'timestamp' in df.columns and 'level' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                df = df.sort_values('timestamp')
-                
-                # Graphique temporel par niveau
-                fig = px.histogram(
-                    df,
-                    x='timestamp',
-                    color='level',
-                    title="Distribution des Logs dans le Temps (Firebase)",
-                    nbins=50,
-                    color_discrete_map={
-                        'ERROR': 'red',
-                        'WARNING': 'orange',
-                        'INFO': 'blue',
-                        'DEBUG': 'gray'
-                    }
-                )
-                
-                fig.update_layout(
-                    height=400,
-                    xaxis_title="Temps",
-                    yaxis_title="Nombre de logs"
-                )
-                
-                st.plotly_chart(fig, use_container_width=True)
+                try:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], utc=True)
+                    df = df.sort_values('timestamp')
+                    
+                    # Graphique temporel par niveau
+                    fig = px.histogram(
+                        df,
+                        x='timestamp',
+                        color='level',
+                        title="Distribution des Logs dans le Temps (Firebase)",
+                        nbins=50,
+                        color_discrete_map={
+                            'ERROR': 'red',
+                            'WARNING': 'orange',
+                            'INFO': 'blue',
+                            'DEBUG': 'gray'
+                        }
+                    )
+                    
+                    fig.update_layout(
+                        height=400,
+                        xaxis_title="Temps",
+                        yaxis_title="Nombre de logs"
+                    )
+                    
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as e:
+                    st.warning(f"⚠️ Erreur graphique timeline: {e}")
+                    st.info("📊 Graphique temporel non disponible")
             else:
                 st.warning("📊 Colonnes timestamp/level manquantes")
                 
@@ -207,9 +221,9 @@ class LogsPage:
             except:
                 sorted_logs = logs_data
             
-            # Affichage en format console
+            # Affichage en format console avec bannières colorées
             log_lines = []
-            for log in sorted_logs:
+            for i, log in enumerate(sorted_logs):
                 # Format console: [TIMESTAMP] [LEVEL] MESSAGE
                 timestamp = log.get('timestamp', 'NO_TIME')
                 
@@ -234,55 +248,24 @@ class LogsPage:
                 message = log.get('message', 'Pas de message')
                 module = log.get('module', '')
                 
-                # Couleur selon le niveau
+                # Affichage avec bannière colorée selon le niveau
                 if level == 'ERROR':
-                    level_icon = "🔴"
+                    st.error(f"🔴 **[{time_display}] ERROR** `{module}` {message}")
                 elif level == 'WARNING':
-                    level_icon = "🟠"
+                    st.warning(f"🟠 **[{time_display}] WARNING** `{module}` {message}")
                 elif level == 'INFO':
-                    level_icon = "🔵"
+                    st.info(f"🔵 **[{time_display}] INFO** `{module}` {message}")
                 elif level == 'DEBUG':
-                    level_icon = "⚪"
+                    st.write(f"⚪ **[{time_display}] DEBUG** `{module}` {message}")
                 else:
-                    level_icon = "⚫"
+                    st.write(f"⚫ **[{time_display}] {level}** `{module}` {message}")
                 
-                # Format ligne de log console
-                if module:
-                    log_line = f"`[{time_display}]` {level_icon} **{level}** `[{module}]` {message}"
-                else:
-                    log_line = f"`[{time_display}]` {level_icon} **{level}** {message}"
-                
-                log_lines.append(log_line)
-            
-            # Afficher dans un container scrollable
-            logs_text = "\n\n".join(log_lines)
-            
-            # Container avec fond sombre pour effet console
-            st.markdown("""
-            <style>
-            .console-logs {
-                background-color: #1e1e1e;
-                color: #ffffff;
-                font-family: 'Courier New', monospace;
-                padding: 15px;
-                border-radius: 5px;
-                height: 500px;
-                overflow-y: auto;
-                border: 1px solid #333;
-            }
-            </style>
-            """, unsafe_allow_html=True)
-            
-            # Affichage des logs en format console
-            with st.container():
-                st.markdown("**Console des logs en temps réel:**")
-                
-                # Zone de logs avec scrolling
-                for log_line in log_lines[:50]:  # Limiter à 50 logs récents
-                    st.markdown(log_line)
+                # Limiter l'affichage pour éviter la surcharge
+                if i >= 30:  # Afficher maximum 30 logs
+                    break
             
             # Informations sur les données
-            st.info(f"📊 {len(sorted_logs)} logs affichés | 🕐 Tri: Plus récents en premier")
+            st.success(f"📊 {len(sorted_logs)} logs trouvés | Affichage des 30 plus récents | 🕐 Tri: Plus récents en premier")
             
             # Options d'export et refresh
             col1, col2, col3 = st.columns(3)
