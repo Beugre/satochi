@@ -259,43 +259,52 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - COPIE EXACTE DU BYPASS QUI FONCTIONNE"""
+        """Récupère les logs depuis Firebase - TEST RADICAL AVEC SESSION STATE"""
+        
+        # TEST RADICAL: Utiliser session_state pour prouver que la méthode s'exécute
+        if 'get_logs_data_called' not in st.session_state:
+            st.session_state.get_logs_data_called = 0
+        st.session_state.get_logs_data_called += 1
+        
+        # Forcer l'affichage avec session_state
+        st.sidebar.error(f"🔥 get_logs_data() appelée {st.session_state.get_logs_data_called} fois")
+        
         try:
-            st.write("🔍 DÉBUT get_logs_data - Version bypass")
+            st.sidebar.success("🔍 DÉBUT get_logs_data - Version bypass")
             
             # COPIE EXACTE du code BYPASS qui fonctionne
             direct_ref = self.db.collection('rsi_scalping_logs')
-            st.write("✅ Collection référence obtenue (bypass)")
+            st.sidebar.info("✅ Collection référence obtenue (bypass)")
             
             direct_stream = direct_ref.limit(limit).stream()
-            st.write("✅ Stream obtenu (bypass)")
+            st.sidebar.info("✅ Stream obtenu (bypass)")
             
             bypass_data = []
             for i, doc in enumerate(direct_stream):
-                st.write(f"📄 Document #{i+1} trouvé: ID={doc.id}")
+                st.sidebar.write(f"📄 Document #{i+1} trouvé: ID={doc.id}")
                 doc_dict = doc.to_dict()
-                st.write(f"📄 Keys: {list(doc_dict.keys())}")
+                st.sidebar.write(f"📄 Keys: {list(doc_dict.keys())}")
                 bypass_data.append(doc_dict)
             
-            st.write(f"🎯 TOTAL récupéré (bypass): {len(bypass_data)} logs")
+            st.sidebar.success(f"🎯 TOTAL récupéré (bypass): {len(bypass_data)} logs")
             
             # Filtrage côté client APRÈS récupération
             if level != 'ALL':
-                st.write(f"🔍 Filtrage par niveau: {level}")
+                st.sidebar.write(f"🔍 Filtrage par niveau: {level}")
                 filtered_data = []
                 for log in bypass_data:
                     if log.get('level', '') == level:
                         filtered_data.append(log)
                 bypass_data = filtered_data
-                st.write(f"🔍 APRÈS filtrage: {len(bypass_data)} logs")
+                st.sidebar.write(f"🔍 APRÈS filtrage: {len(bypass_data)} logs")
             
-            st.write(f"🎯 RETOUR FINAL (bypass): {len(bypass_data)} logs")
+            st.sidebar.success(f"🎯 RETOUR FINAL (bypass): {len(bypass_data)} logs")
             return bypass_data
             
         except Exception as e:
-            st.write(f"❌ EXCEPTION dans get_logs_data: {e}")
+            st.sidebar.error(f"❌ EXCEPTION dans get_logs_data: {e}")
             import traceback
-            st.write(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            st.sidebar.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
             return []
     
     def debug_collections(self) -> dict:
