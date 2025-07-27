@@ -259,53 +259,27 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - TEST RADICAL AVEC SESSION STATE"""
+        """Récupère les logs depuis Firebase - VERSION SIMPLE QUI MARCHE"""
         
-        # TEST RADICAL: Utiliser session_state pour prouver que la méthode s'exécute
-        if 'get_logs_data_called' not in st.session_state:
-            st.session_state.get_logs_data_called = 0
-        st.session_state.get_logs_data_called += 1
+        # COPIE EXACTE du TEST DIRECT qui fonctionne
+        logs_ref = self.db.collection('rsi_scalping_logs')
+        direct_logs = logs_ref.limit(limit).stream()
         
-        # Forcer l'affichage avec session_state
-        st.sidebar.error(f"🔥 get_logs_data() appelée {st.session_state.get_logs_data_called} fois")
+        direct_data = []
+        for log in direct_logs:
+            log_dict = log.to_dict()
+            log_dict['id'] = log.id
+            direct_data.append(log_dict)
         
-        try:
-            st.sidebar.success("🔍 DÉBUT get_logs_data - Version bypass")
-            
-            # COPIE EXACTE du code BYPASS qui fonctionne
-            direct_ref = self.db.collection('rsi_scalping_logs')
-            st.sidebar.info("✅ Collection référence obtenue (bypass)")
-            
-            direct_stream = direct_ref.limit(limit).stream()
-            st.sidebar.info("✅ Stream obtenu (bypass)")
-            
-            bypass_data = []
-            for i, doc in enumerate(direct_stream):
-                st.sidebar.write(f"📄 Document #{i+1} trouvé: ID={doc.id}")
-                doc_dict = doc.to_dict()
-                st.sidebar.write(f"📄 Keys: {list(doc_dict.keys())}")
-                bypass_data.append(doc_dict)
-            
-            st.sidebar.success(f"🎯 TOTAL récupéré (bypass): {len(bypass_data)} logs")
-            
-            # Filtrage côté client APRÈS récupération
-            if level != 'ALL':
-                st.sidebar.write(f"🔍 Filtrage par niveau: {level}")
-                filtered_data = []
-                for log in bypass_data:
-                    if log.get('level', '') == level:
-                        filtered_data.append(log)
-                bypass_data = filtered_data
-                st.sidebar.write(f"🔍 APRÈS filtrage: {len(bypass_data)} logs")
-            
-            st.sidebar.success(f"🎯 RETOUR FINAL (bypass): {len(bypass_data)} logs")
-            return bypass_data
-            
-        except Exception as e:
-            st.sidebar.error(f"❌ EXCEPTION dans get_logs_data: {e}")
-            import traceback
-            st.sidebar.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
-            return []
+        # Filtrage côté client si nécessaire
+        if level != 'ALL':
+            filtered_data = []
+            for log in direct_data:
+                if log.get('level', '') == level:
+                    filtered_data.append(log)
+            direct_data = filtered_data
+        
+        return direct_data
     
     def debug_collections(self) -> dict:
         """Debug: Liste toutes les collections disponibles et leurs contenus"""
