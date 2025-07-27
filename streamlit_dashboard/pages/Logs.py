@@ -31,13 +31,41 @@ class LogsPage:
         """Logs basés UNIQUEMENT sur Firebase"""
         
         st.title("📋 Logs Système (Firebase)")
-        st.markdown("### 🔥 LOGS RÉELS - AUCUNE SIMULATION")
+        st.markdown("### 🔥 LOGS RÉELS - VERSION CORRIGÉE - AUCUNE SIMULATION")
         st.markdown("---")
         
         # Filtres de logs
         self._display_log_filters()
         
         try:
+            # DEBUG DIRECT - TEST FORCE
+            if st.button("🚨 TEST FORCE - Ignorer filtres"):
+                st.info("🔍 Test direct sans filtres...")
+                try:
+                    direct_logs = self.firebase_config.db.collection('rsi_scalping_logs').limit(10).stream()
+                    direct_data = []
+                    for log in direct_logs:
+                        log_dict = log.to_dict()
+                        log_dict['id'] = log.id
+                        # Conversion timestamp
+                        if 'timestamp' in log_dict and log_dict['timestamp']:
+                            try:
+                                if hasattr(log_dict['timestamp'], 'isoformat'):
+                                    log_dict['timestamp'] = log_dict['timestamp'].isoformat()
+                                else:
+                                    log_dict['timestamp'] = str(log_dict['timestamp'])
+                            except:
+                                log_dict['timestamp'] = str(log_dict['timestamp'])
+                        direct_data.append(log_dict)
+                    
+                    st.success(f"✅ TEST FORCE: {len(direct_data)} logs trouvés!")
+                    if direct_data:
+                        # Afficher directement
+                        st.dataframe(pd.DataFrame(direct_data), use_container_width=True)
+                    
+                except Exception as e:
+                    st.error(f"❌ Test force échoué: {e}")
+            
             # Récupération logs RÉELS
             logs_data = self.firebase_config.get_logs_data(
                 level=getattr(self, 'selected_level', 'ALL'),
@@ -292,6 +320,5 @@ class LogsPage:
             st.error(f"❌ Erreur table logs: {e}")
 
 # Lancement de la page
-if __name__ == "__main__":
-    page = LogsPage()
-    page.run()
+page = LogsPage()
+page.run()

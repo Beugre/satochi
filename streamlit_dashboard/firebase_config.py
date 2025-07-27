@@ -259,7 +259,7 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - VRAIE COLLECTION DU BOT"""
+        """Récupère les logs depuis Firebase - VRAIE COLLECTION DU BOT - VERSION CORRIGÉE"""
         try:
             # Utilisation de la vraie collection logs du bot RSI Scalping Pro
             logs_ref = self.db.collection('rsi_scalping_logs')
