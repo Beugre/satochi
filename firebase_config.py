@@ -9,6 +9,7 @@ import firebase_admin
 from firebase_admin import credentials, firestore
 import json
 from typing import Optional
+from datetime import datetime
 
 class StreamlitFirebaseConfig:
     """Configuration Firebase optimisée pour Streamlit Cloud"""
@@ -71,9 +72,10 @@ class StreamlitFirebaseConfig:
             st.stop()
     
     def get_trades_data(self, limit: int = 100) -> list:
-        """Récupère les données de trades depuis Firebase"""
+        """Récupère les données de trades depuis Firebase - VRAIES COLLECTIONS"""
         try:
-            trades_ref = self.db.collection('trades')
+            # Utilisation de la vraie collection du bot RSI Scalping Pro
+            trades_ref = self.db.collection('rsi_scalping_trades')
             trades = trades_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(limit).stream()
             
             trades_data = []
@@ -89,16 +91,28 @@ class StreamlitFirebaseConfig:
             return []
     
     def get_positions_data(self) -> list:
-        """Récupère les positions actives depuis Firebase"""
+        """Récupère les positions actives depuis Firebase - VRAIES COLLECTIONS"""
         try:
-            positions_ref = self.db.collection('positions')
-            positions = positions_ref.where('status', '==', 'OPEN').stream()
+            # Le bot RSI utilise peut-être 'rsi_scalping_signals' pour les positions ouvertes
+            # Essayons d'abord les trades en cours
+            positions_ref = self.db.collection('rsi_scalping_trades')
+            positions = positions_ref.where('status', 'in', ['OPEN', 'PENDING', 'FILLED']).stream()
             
             positions_data = []
             for position in positions:
                 position_dict = position.to_dict()
                 position_dict['id'] = position.id
                 positions_data.append(position_dict)
+            
+            # Si pas de résultats, essayer la collection signals
+            if not positions_data:
+                signals_ref = self.db.collection('rsi_scalping_signals')
+                signals = signals_ref.where('is_active', '==', True).limit(20).stream()
+                
+                for signal in signals:
+                    signal_dict = signal.to_dict()
+                    signal_dict['id'] = signal.id
+                    positions_data.append(signal_dict)
             
             return positions_data
             
@@ -107,19 +121,56 @@ class StreamlitFirebaseConfig:
             return []
     
     def get_bot_health(self) -> dict:
-        """Récupère l'état de santé du bot depuis Firebase"""
+        """Récupère l'état de santé du bot depuis Firebase - VRAIES COLLECTIONS"""
         try:
-            health_ref = self.db.collection('bot_health').document('current')
-            health_doc = health_ref.get()
+            # Chercher dans les vraies collections du bot
+            # 1. Vérifier les logs récents
+            logs_ref = self.db.collection('rsi_scalping_logs')
+            recent_logs = logs_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(5).stream()
             
-            if health_doc.exists:
-                return health_doc.to_dict()
-            else:
+            recent_log_data = []
+            for log in recent_logs:
+                log_dict = log.to_dict()
+                recent_log_data.append(log_dict)
+            
+            if recent_log_data:
+                latest_log = recent_log_data[0]
+                last_update = latest_log.get('timestamp')
+                
+                if last_update:
+                    # Déterminer si le bot est actif (log récent)
+                    if isinstance(last_update, str):
+                        last_update_dt = datetime.fromisoformat(last_update.replace('Z', ''))
+                    else:
+                        last_update_dt = last_update
+                    
+                    time_diff = datetime.now() - last_update_dt.replace(tzinfo=None)
+                    is_active = time_diff.total_seconds() < 300  # Moins de 5 minutes = actif
+                    
+                    return {
+                        'status': 'RUNNING' if is_active else 'STOPPED',
+                        'last_update': last_update,
+                        'message': f'Dernière activité: {time_diff.seconds//60}min ago' if not is_active else 'Bot actif',
+                        'recent_logs_count': len(recent_log_data)
+                    }
+            
+            # Si aucun log, chercher dans les trades récents
+            trades_ref = self.db.collection('rsi_scalping_trades')
+            recent_trades = trades_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(1).stream()
+            
+            for trade in recent_trades:
+                trade_dict = trade.to_dict()
                 return {
-                    'status': 'UNKNOWN',
-                    'last_update': None,
-                    'message': 'Aucune donnée de santé disponible'
+                    'status': 'RUNNING',
+                    'last_update': trade_dict.get('timestamp'),
+                    'message': 'Bot actif - Trading en cours'
                 }
+            
+            return {
+                'status': 'UNKNOWN',
+                'last_update': None,
+                'message': 'Aucune activité récente détectée'
+            }
                 
         except Exception as e:
             st.error(f"❌ Erreur récupération santé bot: {e}")
@@ -130,11 +181,11 @@ class StreamlitFirebaseConfig:
             }
     
     def get_analytics_data(self, period_days: int = 30) -> dict:
-        """Récupère les données d'analytics depuis Firebase"""
+        """Récupère les données d'analytics depuis Firebase - VRAIES COLLECTIONS"""
         try:
-            # Récupération des métriques de performance
-            analytics_ref = self.db.collection('analytics')
-            analytics_docs = analytics_ref.order_by('timestamp', direction=firestore.Query.DESCENDING).limit(period_days).stream()
+            # Récupération des stats journalières du bot RSI
+            analytics_ref = self.db.collection('rsi_scalping_daily_stats')
+            analytics_docs = analytics_ref.order_by('date', direction=firestore.Query.DESCENDING).limit(period_days).stream()
             
             analytics_data = []
             for doc in analytics_docs:
@@ -156,9 +207,10 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase"""
+        """Récupère les logs depuis Firebase - VRAIE COLLECTION DU BOT"""
         try:
-            logs_ref = self.db.collection('logs')
+            # Utilisation de la vraie collection logs du bot RSI Scalping Pro
+            logs_ref = self.db.collection('rsi_scalping_logs')
             
             if level != 'ALL':
                 logs_query = logs_ref.where('level', '==', level)
@@ -177,4 +229,47 @@ class StreamlitFirebaseConfig:
             
         except Exception as e:
             st.error(f"❌ Erreur récupération logs: {e}")
+            # Debug: essayer de lister les collections disponibles
+            try:
+                collections = self.db.collections()
+                collection_names = [col.id for col in collections]
+                st.info(f"🔍 Collections disponibles: {', '.join(collection_names)}")
+            except:
+                pass
             return []
+    
+    def debug_collections(self) -> dict:
+        """Debug: Liste toutes les collections disponibles et leurs contenus"""
+        try:
+            collections_info = {}
+            
+            # Lister toutes les collections
+            collections = self.db.collections()
+            
+            for collection in collections:
+                collection_name = collection.id
+                
+                # Compter les documents
+                docs = collection.limit(5).stream()
+                doc_count = 0
+                sample_docs = []
+                
+                for doc in docs:
+                    doc_count += 1
+                    doc_data = doc.to_dict()
+                    sample_docs.append({
+                        'id': doc.id,
+                        'keys': list(doc_data.keys()) if doc_data else [],
+                        'sample_data': doc_data
+                    })
+                
+                collections_info[collection_name] = {
+                    'doc_count_sample': doc_count,
+                    'sample_documents': sample_docs
+                }
+            
+            return collections_info
+            
+        except Exception as e:
+            st.error(f"❌ Erreur debug collections: {e}")
+            return {}

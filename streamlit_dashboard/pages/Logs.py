@@ -47,6 +47,11 @@ class LogsPage:
             if not logs_data:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")
+                
+                # BUTTON DEBUG COLLECTIONS
+                if st.button("🔍 Debug: Voir les collections Firebase"):
+                    debug_info = self.firebase_config.debug_collections()
+                    st.json(debug_info)
                 return
             
             # Statistiques logs RÉELLES
