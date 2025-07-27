@@ -103,6 +103,22 @@ class LogsPage:
                 except Exception as e:
                     st.error(f"❌ SANS CONVERSION failed: {e}")
             
+            # BOUTON TEST ISOLÉ get_logs_data()
+            if st.button("🔍 TEST ISOLÉ get_logs_data()"):
+                st.markdown("### 🧪 TEST ISOLÉ AVEC DEBUG COMPLET")
+                try:
+                    st.info("🚀 Appel direct de get_logs_data(level='ALL', limit=5)")
+                    isolated_data = self.firebase_config.get_logs_data(level='ALL', limit=5)
+                    st.success(f"🎯 RÉSULTAT: {len(isolated_data)} logs")
+                    if isolated_data:
+                        st.json(isolated_data[0])
+                    else:
+                        st.warning("⚠️ Résultat vide mais pas d'erreur")
+                except Exception as e:
+                    st.error(f"❌ TEST ISOLÉ failed: {e}")
+                    import traceback
+                    st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            
             if not logs_data:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")

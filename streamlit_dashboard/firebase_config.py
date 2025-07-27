@@ -259,38 +259,50 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - VERSION ULTRA SIMPLE SANS CONVERSION"""
+        """Récupère les logs depuis Firebase - VERSION DEBUG ULTRA DÉTAILLÉE"""
         try:
+            st.info(f"🔍 DÉBUT get_logs_data: level={level}, limit={limit}")
+            
             # COPIE EXACTE du test SANS CONVERSION qui fonctionne
             logs_ref = self.db.collection('rsi_scalping_logs')
+            st.info("✅ Collection référence créée")
+            
             raw_logs = logs_ref.limit(limit).stream()
+            st.info("✅ Query stream créé")
             
             raw_data = []
+            count = 0
             for log in raw_logs:
+                count += 1
+                st.info(f"📄 Traitement log #{count}")
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
                 # AUCUNE conversion timestamp - on garde tout brut
                 raw_data.append(log_dict)
+                st.info(f"✅ Log #{count} ajouté: keys={list(log_dict.keys())}")
             
-            # DEBUG: Afficher le nombre de logs avant filtrage
-            st.info(f"🔍 DEBUG: {len(raw_data)} logs récupérés avant filtrage (level={level})")
+            st.info(f"🔍 TOTAL récupéré: {len(raw_data)} logs")
             
             # Filtrage côté client APRÈS récupération complète
             if level != 'ALL':
+                st.info(f"🔍 Filtrage par niveau: {level}")
                 filtered_data = []
-                for log in raw_data:
-                    if log.get('level', '') == level:
+                for i, log in enumerate(raw_data):
+                    log_level = log.get('level', '')
+                    st.info(f"Log {i}: level='{log_level}' (recherché: '{level}')")
+                    if log_level == level:
                         filtered_data.append(log)
+                        st.info(f"✅ Log {i} correspond au filtre")
                 raw_data = filtered_data
-                st.info(f"🔍 DEBUG: {len(raw_data)} logs après filtrage par niveau '{level}'")
+                st.info(f"🔍 APRÈS filtrage: {len(raw_data)} logs")
             
-            # Pas de tri par timestamp puisqu'on ne convertit pas
-            # Firebase nous donne déjà un ordre
-            
+            st.info(f"🎯 RETOUR FINAL: {len(raw_data)} logs")
             return raw_data
             
         except Exception as e:
-            st.error(f"❌ Erreur récupération logs: {e}")
+            st.error(f"❌ EXCEPTION dans get_logs_data: {e}")
+            import traceback
+            st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
             return []
     
     def debug_collections(self) -> dict:
