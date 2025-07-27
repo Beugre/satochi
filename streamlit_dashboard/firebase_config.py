@@ -259,45 +259,38 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - VERSION DEBUG ULTRA DÉTAILLÉE"""
+        """Récupère les logs depuis Firebase - COPIE EXACTE DU BYPASS QUI FONCTIONNE"""
         try:
-            st.write("🔍 DÉBUT get_logs_data:", level, limit)
+            st.write("🔍 DÉBUT get_logs_data - Version bypass")
             
-            # COPIE EXACTE du test SANS CONVERSION qui fonctionne
-            logs_ref = self.db.collection('rsi_scalping_logs')
-            st.write("✅ Collection référence créée")
+            # COPIE EXACTE du code BYPASS qui fonctionne
+            direct_ref = self.db.collection('rsi_scalping_logs')
+            st.write("✅ Collection référence obtenue (bypass)")
             
-            raw_logs = logs_ref.limit(limit).stream()
-            st.write("✅ Query stream créé")
+            direct_stream = direct_ref.limit(limit).stream()
+            st.write("✅ Stream obtenu (bypass)")
             
-            raw_data = []
-            count = 0
-            for log in raw_logs:
-                count += 1
-                st.write(f"📄 Traitement log #{count}")
-                log_dict = log.to_dict()
-                log_dict['id'] = log.id
-                # AUCUNE conversion timestamp - on garde tout brut
-                raw_data.append(log_dict)
-                st.write(f"✅ Log #{count} ajouté: keys={list(log_dict.keys())}")
+            bypass_data = []
+            for i, doc in enumerate(direct_stream):
+                st.write(f"📄 Document #{i+1} trouvé: ID={doc.id}")
+                doc_dict = doc.to_dict()
+                st.write(f"📄 Keys: {list(doc_dict.keys())}")
+                bypass_data.append(doc_dict)
             
-            st.write(f"🔍 TOTAL récupéré: {len(raw_data)} logs")
+            st.write(f"🎯 TOTAL récupéré (bypass): {len(bypass_data)} logs")
             
-            # Filtrage côté client APRÈS récupération complète
+            # Filtrage côté client APRÈS récupération
             if level != 'ALL':
                 st.write(f"🔍 Filtrage par niveau: {level}")
                 filtered_data = []
-                for i, log in enumerate(raw_data):
-                    log_level = log.get('level', '')
-                    st.write(f"Log {i}: level='{log_level}' (recherché: '{level}')")
-                    if log_level == level:
+                for log in bypass_data:
+                    if log.get('level', '') == level:
                         filtered_data.append(log)
-                        st.write(f"✅ Log {i} correspond au filtre")
-                raw_data = filtered_data
-                st.write(f"🔍 APRÈS filtrage: {len(raw_data)} logs")
+                bypass_data = filtered_data
+                st.write(f"🔍 APRÈS filtrage: {len(bypass_data)} logs")
             
-            st.write(f"🎯 RETOUR FINAL: {len(raw_data)} logs")
-            return raw_data
+            st.write(f"🎯 RETOUR FINAL (bypass): {len(bypass_data)} logs")
+            return bypass_data
             
         except Exception as e:
             st.write(f"❌ EXCEPTION dans get_logs_data: {e}")
