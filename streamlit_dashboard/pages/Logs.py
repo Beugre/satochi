@@ -44,6 +44,43 @@ class LogsPage:
                 limit=getattr(self, 'logs_limit', 200)
             )
             
+            # BOUTON DE DEBUG TEMPORAIRE - COMPARAISON DIRECTE
+            if st.button("🔥 TEST DIRECT vs get_logs_data"):
+                st.markdown("### 🔍 COMPARAISON DIRECTE")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**🔥 TEST DIRECT (qui fonctionne):**")
+                    try:
+                        logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+                        direct_logs = logs_ref.limit(5).stream()
+                        
+                        direct_data = []
+                        for log in direct_logs:
+                            log_dict = log.to_dict()
+                            direct_data.append(log_dict)
+                        
+                        st.success(f"✅ TEST DIRECT: {len(direct_data)} logs")
+                        if direct_data:
+                            st.json(direct_data[0])
+                        else:
+                            st.error("❌ TEST DIRECT: Aucun log")
+                    except Exception as e:
+                        st.error(f"❌ TEST DIRECT failed: {e}")
+                
+                with col2:
+                    st.markdown("**⚙️ get_logs_data():**")
+                    try:
+                        method_data = self.firebase_config.get_logs_data(limit=5)
+                        st.success(f"✅ get_logs_data(): {len(method_data)} logs")
+                        if method_data:
+                            st.json(method_data[0])
+                        else:
+                            st.error("❌ get_logs_data(): Aucun log")
+                    except Exception as e:
+                        st.error(f"❌ get_logs_data() failed: {e}")
+            
             if not logs_data:
                 st.warning("📭 Aucun log trouvé dans Firebase")
                 st.info("🔄 Vérifiez que le bot écrit des logs")

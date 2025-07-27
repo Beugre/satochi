@@ -259,20 +259,18 @@ class StreamlitFirebaseConfig:
             }
     
     def get_logs_data(self, level: str = 'ALL', limit: int = 100) -> list:
-        """Récupère les logs depuis Firebase - VRAIE COLLECTION DU BOT - VERSION CORRIGÉE"""
+        """Récupère les logs depuis Firebase - COPIE EXACTE DU TEST FORCE QUI FONCTIONNE"""
         try:
-            # Utilisation de la vraie collection logs du bot RSI Scalping Pro
+            # COPIE EXACTE de la logique TEST FORCE qui fonctionne
             logs_ref = self.db.collection('rsi_scalping_logs')
+            sample_logs = logs_ref.limit(limit).stream()
             
-            # CORRECTION: Utiliser la même méthode que le TEST FORCE qui fonctionne
-            logs = logs_ref.limit(limit).stream()
-            
-            logs_data = []
-            for log in logs:
+            sample_data = []
+            for log in sample_logs:
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
                 
-                # Conversion du timestamp Firebase en string (comme TEST FORCE)
+                # Conversion timestamp EXACTEMENT comme dans TEST FORCE
                 if 'timestamp' in log_dict and log_dict['timestamp']:
                     try:
                         if hasattr(log_dict['timestamp'], 'isoformat'):
@@ -282,21 +280,23 @@ class StreamlitFirebaseConfig:
                     except:
                         log_dict['timestamp'] = str(log_dict['timestamp'])
                 
-                # Filtrer par niveau côté client APRÈS conversion (pas avant)
-                if level != 'ALL':
-                    log_level = log_dict.get('level', '')
-                    if log_level != level:
-                        continue  # Ignorer ce log s'il ne correspond pas au niveau
-                
-                logs_data.append(log_dict)
+                sample_data.append(log_dict)
             
-            # Tri côté client par timestamp (du plus récent au plus ancien)
+            # Filtrage côté client APRÈS récupération complète (comme TEST FORCE)
+            if level != 'ALL':
+                filtered_data = []
+                for log in sample_data:
+                    if log.get('level', '') == level:
+                        filtered_data.append(log)
+                sample_data = filtered_data
+            
+            # Tri par timestamp
             try:
-                logs_data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+                sample_data.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
             except:
-                pass  # Si le tri échoue, on garde l'ordre original
+                pass
             
-            return logs_data
+            return sample_data
             
         except Exception as e:
             st.error(f"❌ Erreur récupération logs: {e}")
