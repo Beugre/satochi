@@ -1,0 +1,31 @@
+# 🤖 REQUIREMENTS BOT DE TRADING - RSI SCALPING PRO
+# Dépendances pour le bot de trading principal et le service binance-live
+
+# 🔗 APIs de trading
+ccxt==4.1.99
+python-binance==1.0.19
+
+# 📊 Calculs et données
+pandas==2.1.4
+numpy==1.25.2
+ta-lib==0.4.28
+
+# 🔥 Base de données et stockage
+firebase-admin==6.4.0
+
+# 📱 Notifications
+python-telegram-bot==20.7
+
+# 🌐 Requêtes HTTP
+requests==2.31.0
+aiofiles==23.2.0
+
+# ⏰ Gestion du temps
+pytz==2023.3
+schedule==1.2.0
+
+# 🔧 Configuration
+python-dotenv==1.0.0
+
+# ⚡ Async
+asyncio

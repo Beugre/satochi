@@ -1,0 +1,35 @@
+[Unit]
+Description=Satochi Trading Bot - RSI Scalping Pro
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/satochi_bot
+Environment=PATH=/opt/satochi_bot/venv/bin
+ExecStart=/opt/satochi_bot/venv/bin/python /opt/satochi_bot/main.py
+Restart=always
+RestartSec=10
+
+# Redirection des logs
+StandardOutput=append:/var/log/satochi-bot/bot.log
+StandardError=append:/var/log/satochi-bot/error.log
+
+# Variables d'environnement
+Environment=PYTHONPATH=/opt/satochi_bot
+Environment=PYTHONUNBUFFERED=1
+
+# Sécurité
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/log/satochi-bot
+
+# Limites de ressources
+LimitNOFILE=65536
+MemoryMax=512M
+CPUQuota=50%
+
+[Install]
+WantedBy=multi-user.target
