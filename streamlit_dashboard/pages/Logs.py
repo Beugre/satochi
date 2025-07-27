@@ -38,35 +38,7 @@ class LogsPage:
         self._display_log_filters()
         
         try:
-            # DEBUG DIRECT - TEST FORCE
-            if st.button("🚨 TEST FORCE - Ignorer filtres"):
-                st.info("🔍 Test direct sans filtres...")
-                try:
-                    direct_logs = self.firebase_config.db.collection('rsi_scalping_logs').limit(10).stream()
-                    direct_data = []
-                    for log in direct_logs:
-                        log_dict = log.to_dict()
-                        log_dict['id'] = log.id
-                        # Conversion timestamp
-                        if 'timestamp' in log_dict and log_dict['timestamp']:
-                            try:
-                                if hasattr(log_dict['timestamp'], 'isoformat'):
-                                    log_dict['timestamp'] = log_dict['timestamp'].isoformat()
-                                else:
-                                    log_dict['timestamp'] = str(log_dict['timestamp'])
-                            except:
-                                log_dict['timestamp'] = str(log_dict['timestamp'])
-                        direct_data.append(log_dict)
-                    
-                    st.success(f"✅ TEST FORCE: {len(direct_data)} logs trouvés!")
-                    if direct_data:
-                        # Afficher directement
-                        st.dataframe(pd.DataFrame(direct_data), use_container_width=True)
-                    
-                except Exception as e:
-                    st.error(f"❌ Test force échoué: {e}")
-            
-            # Récupération logs RÉELS
+            # Récupération logs RÉELS avec méthode corrigée
             logs_data = self.firebase_config.get_logs_data(
                 level=getattr(self, 'selected_level', 'ALL'),
                 limit=getattr(self, 'logs_limit', 200)
@@ -255,69 +227,118 @@ class LogsPage:
             st.error(f"❌ Erreur timeline logs: {e}")
     
     def _display_real_logs_table(self, logs_data):
-        """Table des logs RÉELS"""
-        st.subheader("📋 Journal des Logs (Firebase)")
+        """Affichage des logs RÉELS en format console"""
+        st.subheader("📋 Console des Logs (Firebase)")
         
         try:
-            df = pd.DataFrame(logs_data)
-            
-            if len(df) == 0:
+            if len(logs_data) == 0:
                 st.info("📭 Aucun log")
                 return
             
             # Tri par timestamp décroissant (plus récents d'abord)
-            if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'])
-                df = df.sort_values('timestamp', ascending=False)
+            try:
+                sorted_logs = sorted(logs_data, key=lambda x: x.get('timestamp', ''), reverse=True)
+            except:
+                sorted_logs = logs_data
             
-            # Formatage pour affichage
-            display_df = df.copy()
+            # Affichage en format console
+            log_lines = []
+            for log in sorted_logs:
+                # Format console: [TIMESTAMP] [LEVEL] MESSAGE
+                timestamp = log.get('timestamp', 'NO_TIME')
+                if isinstance(timestamp, str) and 'T' in timestamp:
+                    # Extraire juste la partie heure:minute:seconde
+                    try:
+                        dt_part = timestamp.split('T')[1].split('+')[0]  # Récupérer HH:MM:SS
+                        time_display = dt_part[:8]  # Garder HH:MM:SS
+                    except:
+                        time_display = timestamp[:19]  # Fallback
+                else:
+                    time_display = str(timestamp)[:19]
+                
+                level = log.get('level', 'INFO')
+                message = log.get('message', 'Pas de message')
+                module = log.get('module', '')
+                
+                # Couleur selon le niveau
+                if level == 'ERROR':
+                    level_icon = "🔴"
+                elif level == 'WARNING':
+                    level_icon = "🟠"
+                elif level == 'INFO':
+                    level_icon = "🔵"
+                elif level == 'DEBUG':
+                    level_icon = "⚪"
+                else:
+                    level_icon = "⚫"
+                
+                # Format ligne de log console
+                if module:
+                    log_line = f"`[{time_display}]` {level_icon} **{level}** `[{module}]` {message}"
+                else:
+                    log_line = f"`[{time_display}]` {level_icon} **{level}** {message}"
+                
+                log_lines.append(log_line)
             
-            # Colonnes importantes
-            important_columns = ['timestamp', 'level', 'message', 'module', 'function']
-            available_columns = [col for col in important_columns if col in display_df.columns]
+            # Afficher dans un container scrollable
+            logs_text = "\n\n".join(log_lines)
             
-            # Si pas de colonnes standards, prendre toutes les colonnes
-            if not available_columns:
-                available_columns = list(display_df.columns)
+            # Container avec fond sombre pour effet console
+            st.markdown("""
+            <style>
+            .console-logs {
+                background-color: #1e1e1e;
+                color: #ffffff;
+                font-family: 'Courier New', monospace;
+                padding: 15px;
+                border-radius: 5px;
+                height: 500px;
+                overflow-y: auto;
+                border: 1px solid #333;
+            }
+            </style>
+            """, unsafe_allow_html=True)
             
-            # Formatage du timestamp
-            if 'timestamp' in display_df.columns:
-                display_df['timestamp'] = display_df['timestamp'].dt.strftime('%Y-%m-%d %H:%M:%S')
-            
-            # Ajout de couleurs par niveau
-            def highlight_level(row):
-                if 'level' in row and isinstance(row['level'], str):
-                    if row['level'] == 'ERROR':
-                        return ['background-color: #ffebee'] * len(row)
-                    elif row['level'] == 'WARNING':
-                        return ['background-color: #fff3e0'] * len(row)
-                    elif row['level'] == 'INFO':
-                        return ['background-color: #e3f2fd'] * len(row)
-                return [''] * len(row)
-            
-            # Affichage avec style
-            if 'level' in display_df.columns:
-                styled_df = display_df[available_columns].style.apply(highlight_level, axis=1)
-                st.dataframe(styled_df, use_container_width=True, height=500)
-            else:
-                st.dataframe(display_df[available_columns], use_container_width=True, height=500)
+            # Affichage des logs en format console
+            with st.container():
+                st.markdown("**Console des logs en temps réel:**")
+                
+                # Zone de logs avec scrolling
+                for log_line in log_lines[:50]:  # Limiter à 50 logs récents
+                    st.markdown(log_line)
             
             # Informations sur les données
-            st.info(f"📊 {len(df)} logs affichés | Colonnes: {', '.join(available_columns)}")
+            st.info(f"📊 {len(sorted_logs)} logs affichés | 🕐 Tri: Plus récents en premier")
             
-            # Export
-            if st.button("💾 Exporter CSV"):
-                csv = df.to_csv(index=False)
-                st.download_button(
-                    label="📥 Télécharger logs",
-                    data=csv,
-                    file_name=f"satochi_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
-                    mime="text/csv"
-                )
+            # Options d'export et refresh
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                if st.button("🔄 Actualiser les logs"):
+                    st.rerun()
+            
+            with col2:
+                if st.button("💾 Exporter CSV"):
+                    df = pd.DataFrame(sorted_logs)
+                    csv = df.to_csv(index=False)
+                    st.download_button(
+                        label="📥 Télécharger logs",
+                        data=csv,
+                        file_name=f"satochi_logs_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                        mime="text/csv"
+                    )
+            
+            with col3:
+                if st.button("📋 Voir format tableau"):
+                    st.dataframe(pd.DataFrame(sorted_logs), use_container_width=True, height=300)
             
         except Exception as e:
-            st.error(f"❌ Erreur table logs: {e}")
+            st.error(f"❌ Erreur affichage logs console: {e}")
+            # Fallback vers tableau simple
+            try:
+                st.dataframe(pd.DataFrame(logs_data), use_container_width=True)
+            except:
+                st.error("Impossible d'afficher les logs")
 
 # Lancement de la page
 page = LogsPage()

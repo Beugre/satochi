@@ -264,7 +264,7 @@ class StreamlitFirebaseConfig:
             # Utilisation de la vraie collection logs du bot RSI Scalping Pro
             logs_ref = self.db.collection('rsi_scalping_logs')
             
-            # Toujours récupérer tous les logs d'abord, puis filtrer côté client
+            # CORRECTION: Utiliser la même méthode que le TEST FORCE qui fonctionne
             logs = logs_ref.limit(limit).stream()
             
             logs_data = []
@@ -272,24 +272,21 @@ class StreamlitFirebaseConfig:
                 log_dict = log.to_dict()
                 log_dict['id'] = log.id
                 
-                # Filtrer par niveau côté client si nécessaire
+                # Conversion du timestamp Firebase en string (comme TEST FORCE)
+                if 'timestamp' in log_dict and log_dict['timestamp']:
+                    try:
+                        if hasattr(log_dict['timestamp'], 'isoformat'):
+                            log_dict['timestamp'] = log_dict['timestamp'].isoformat()
+                        else:
+                            log_dict['timestamp'] = str(log_dict['timestamp'])
+                    except:
+                        log_dict['timestamp'] = str(log_dict['timestamp'])
+                
+                # Filtrer par niveau côté client APRÈS conversion (pas avant)
                 if level != 'ALL':
                     log_level = log_dict.get('level', '')
                     if log_level != level:
                         continue  # Ignorer ce log s'il ne correspond pas au niveau
-                
-                # Conversion du timestamp Firebase en string
-                if 'timestamp' in log_dict and log_dict['timestamp']:
-                    try:
-                        # Conversion DatetimeWithNanoseconds vers ISO string
-                        firebase_timestamp = log_dict['timestamp']
-                        if hasattr(firebase_timestamp, 'isoformat'):
-                            log_dict['timestamp'] = firebase_timestamp.isoformat()
-                        else:
-                            log_dict['timestamp'] = str(firebase_timestamp)
-                    except Exception as e:
-                        # En cas d'erreur, garder le timestamp original
-                        log_dict['timestamp'] = str(log_dict['timestamp'])
                 
                 logs_data.append(log_dict)
             
@@ -303,13 +300,6 @@ class StreamlitFirebaseConfig:
             
         except Exception as e:
             st.error(f"❌ Erreur récupération logs: {e}")
-            # Debug: essayer de lister les collections disponibles
-            try:
-                collections = self.db.collections()
-                collection_names = [col.id for col in collections]
-                st.info(f"🔍 Collections disponibles: {', '.join(collection_names)}")
-            except:
-                pass
             return []
     
     def debug_collections(self) -> dict:
