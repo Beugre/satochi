@@ -9,6 +9,8 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta, timezone
 import pytz
+import time
+from streamlit_autorefresh import st_autorefresh
 
 st.set_page_config(
     page_title="Logs - Satochi Bot",
@@ -71,9 +73,11 @@ class LogsPage:
         # Filtres de logs
         self._display_log_filters()
         
-        # Auto-refresh simple (optionnel - utilisateur peut actualiser manuellement)
+        # Auto-refresh automatique toutes les 5 secondes
         if getattr(self, 'auto_refresh', False):
-            st.info("🔄 Mode auto-refresh activé - Utilisez F5 ou le bouton 🔄 Actualiser pour rafraîchir")
+            # Utiliser streamlit-autorefresh pour un vrai auto-refresh
+            count = st_autorefresh(interval=5000, key="logs_autorefresh")
+            st.success(f"🔄 Auto-refresh activé - Actualisation #{count} (toutes les 5s)")
         
         try:
             # RÉCUPÉRATION LOGS DIRECTE DANS LA PAGE
@@ -136,7 +140,7 @@ class LogsPage:
             )
         
         with col3:
-            self.auto_refresh = st.checkbox("Auto-refresh", value=True)
+            self.auto_refresh = st.checkbox("Auto-refresh (5s)", value=False)
         
         with col4:
             if st.button("🔄 Actualiser"):
