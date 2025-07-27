@@ -105,6 +105,8 @@ class DebugPage:
         
         if st.button("🔍 Tester get_logs_data"):
             try:
+                st.info(f"🔍 Test avec niveau='{level}' et limite={limit}")
+                
                 logs_data = self.firebase_config.get_logs_data(level=level, limit=limit)
                 st.write(f"📊 Nombre de logs récupérés: {len(logs_data)}")
                 
@@ -137,6 +139,29 @@ class DebugPage:
                 
                 else:
                     st.warning("⚠️ Aucun log récupéré par get_logs_data")
+                    
+                    # Debug additionnel : essayer sans filtre
+                    st.info("🔍 Test sans filtre de niveau...")
+                    try:
+                        logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+                        raw_logs = logs_ref.limit(3).stream()
+                        
+                        raw_data = []
+                        for log in raw_logs:
+                            log_dict = log.to_dict()
+                            raw_data.append(log_dict)
+                        
+                        st.write(f"📋 Logs bruts trouvés: {len(raw_data)}")
+                        if raw_data:
+                            st.write("**Premier log brut:**")
+                            st.json(raw_data[0])
+                            
+                            # Vérifier les niveaux disponibles
+                            levels = [log.get('level', 'NO_LEVEL') for log in raw_data]
+                            st.write(f"**Niveaux dans les logs bruts:** {levels}")
+                        
+                    except Exception as e2:
+                        st.error(f"Erreur test brut: {e2}")
                     
             except Exception as e:
                 st.error(f"❌ Erreur get_logs_data: {e}")
