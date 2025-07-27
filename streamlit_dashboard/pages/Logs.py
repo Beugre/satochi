@@ -38,11 +38,28 @@ class LogsPage:
         self._display_log_filters()
         
         try:
+            # DÉBUT DEBUG EXPLICITE
+            st.sidebar.warning("🔍 DÉBUT récupération logs...")
+            
             # Récupération logs RÉELS avec méthode corrigée
+            st.sidebar.info(f"📞 Appel get_logs_data(level={getattr(self, 'selected_level', 'ALL')}, limit={getattr(self, 'logs_limit', 200)})")
+            
             logs_data = self.firebase_config.get_logs_data(
                 level=getattr(self, 'selected_level', 'ALL'),
                 limit=getattr(self, 'logs_limit', 200)
             )
+            
+            st.sidebar.info(f"📋 Résultat get_logs_data: {len(logs_data) if logs_data else 0} logs")
+            
+            # DEBUG: Vérifier le type de retour
+            if logs_data is None:
+                st.sidebar.error("❌ get_logs_data() retourne None!")
+            elif not isinstance(logs_data, list):
+                st.sidebar.error(f"❌ get_logs_data() retourne {type(logs_data)} au lieu de list!")
+            elif len(logs_data) == 0:
+                st.sidebar.warning("⚠️ get_logs_data() retourne une liste vide []")
+            else:
+                st.sidebar.success(f"✅ get_logs_data() retourne {len(logs_data)} logs valides")
             
             # BOUTON DE DEBUG TEMPORAIRE - COMPARAISON DIRECTE
             if st.button("🔥 TEST DIRECT vs get_logs_data"):
@@ -155,6 +172,59 @@ class LogsPage:
                     
                 except Exception as e:
                     st.error(f"❌ BYPASS failed: {e}")
+                    import traceback
+                    st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
+            
+            # NOUVEAU TEST: APPEL DIRECT SANS get_logs_data()
+            if st.button("🆘 TEST DIRECT SANS MÉTHODE"):
+                st.markdown("### 🆘 TEST SANS PASSER PAR get_logs_data()")
+                
+                # Force un affichage dans la sidebar
+                st.sidebar.error("🆘 TEST DIRECT LANCÉ!")
+                
+                try:
+                    # Accès direct aux logs depuis la page
+                    logs_ref = self.firebase_config.db.collection('rsi_scalping_logs')
+                    direct_logs = logs_ref.limit(200).stream()
+                    
+                    direct_data = []
+                    for log in direct_logs:
+                        log_dict = log.to_dict()
+                        log_dict['id'] = log.id
+                        direct_data.append(log_dict)
+                    
+                    st.sidebar.success(f"🎯 LOGS DIRECTS: {len(direct_data)}")
+                    st.success(f"✅ DIRECT: {len(direct_data)} logs récupérés SANS get_logs_data()")
+                    
+                    if direct_data:
+                        # Afficher directement les stats
+                        st.markdown("### 📊 Statistiques DIRECTES")
+                        st.metric("Total Logs DIRECT", len(direct_data))
+                        
+                        # Afficher directement les logs en console
+                        st.markdown("### 📋 Console DIRECTE")
+                        
+                        for i, log in enumerate(direct_data[:10]):  # Afficher 10 premiers
+                            timestamp = log.get('timestamp', 'NO_TIME')
+                            level = log.get('level', 'INFO')
+                            message = log.get('message', 'Pas de message')
+                            
+                            # Couleur selon le niveau
+                            if level == 'ERROR':
+                                level_icon = "🔴"
+                            elif level == 'WARNING':
+                                level_icon = "🟠"
+                            elif level == 'INFO':
+                                level_icon = "🔵"
+                            else:
+                                level_icon = "⚪"
+                            
+                            st.markdown(f"`[{i+1}]` {level_icon} **{level}** {message}")
+                        
+                        st.info(f"📊 Affichage des 10 premiers logs sur {len(direct_data)} total")
+                    
+                except Exception as e:
+                    st.error(f"❌ TEST DIRECT failed: {e}")
                     import traceback
                     st.error(f"🔍 TRACEBACK: {traceback.format_exc()}")
             
