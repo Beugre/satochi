@@ -105,10 +105,10 @@ class Trade:
 class TradeExecutor:
     """Exécuteur de trades avec gestion complète du cycle de vie"""
     
-    def __init__(self, data_fetcher, config, firebase_logger=None, telegram_notifier=None):
+    def __init__(self, data_fetcher, config, risk_config, firebase_logger=None, telegram_notifier=None):
         self.data_fetcher = data_fetcher
         self.config = config
-        self.risk_config = config  # risk_config fait maintenant partie de config
+        self.risk_config = risk_config
         self.firebase_logger = firebase_logger
         self.telegram_notifier = telegram_notifier
         self.logger = logging.getLogger(__name__)

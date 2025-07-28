@@ -37,7 +37,7 @@ import pandas as pd
 import numpy as np
 
 # Imports locaux
-from config import TradingConfig, APIConfig, LoggingConfig
+from config import TradingConfig, APIConfig, LoggingConfig, RiskManagementConfig
 from data_fetcher import DataFetcher
 from indicators import TechnicalIndicators
 from firebase_logger import FirebaseLogger
@@ -54,6 +54,7 @@ class RSIScalpingBot:
         
         # Configuration
         self.config = TradingConfig()
+        self.risk_config = RiskManagementConfig()
         self.api_config = APIConfig()
         
         # État du bot
@@ -143,6 +144,7 @@ class RSIScalpingBot:
             self.trade_executor = TradeExecutor(
                 data_fetcher=self.data_fetcher,
                 config=self.config,
+                risk_config=self.risk_config,
                 firebase_logger=self.firebase_logger,
                 telegram_notifier=self.telegram_notifier
             )
