@@ -607,9 +607,9 @@ class RSIScalpingBot:
                 self.open_positions[pair] = {
                     'entry_price': trade.entry_price,
                     'quantity': trade.quantity,
-                    'take_profit': trade.take_profit_price,
-                    'stop_loss': trade.stop_loss_price,
-                    'entry_time': trade.entry_time,
+                    'take_profit': trade.take_profit,
+                    'stop_loss': trade.stop_loss,
+                    'entry_time': trade.timestamp,
                     'position_value': trade.capital_engaged,
                     'analysis_data': analysis_data
                 }
@@ -637,17 +637,15 @@ class RSIScalpingBot:
                 
                 # Notification
                 if self.telegram_notifier:
-                    await self.telegram_notifier.send_trade_open_notification(
-                        trade=type('Trade', (), {
-                            'pair': pair,
-                            'entry_price': current_price,
-                            'size': quantity,
-                            'stop_loss': stop_loss_price,
-                            'take_profit': take_profit_price,
-                            'timestamp': now
-                        })(),
-                        capital_engaged=position_value
-                    )
+                    await self.telegram_notifier.send_trade_open_notification({
+                        'pair': pair,
+                        'entry_price': current_price,
+                        'quantity': quantity,
+                        'capital_engaged': position_value,
+                        'stop_loss': stop_loss_price,
+                        'take_profit': take_profit_price,
+                        'timestamp': now
+                    })
                 
                 # Log Firebase
                 if self.firebase_logger:
@@ -757,19 +755,16 @@ class RSIScalpingBot:
                 
                 # Notification
                 if self.telegram_notifier:
-                    await self.telegram_notifier.send_trade_close_notification(
-                        trade=type('Trade', (), {
-                            'pair': pair,
-                            'exit_price': exit_price,
-                            'exit_reason': reason,
-                            'exit_timestamp': datetime.now(),
-                            'duration': str(datetime.now() - position['entry_time'])
-                        })(),
-                        pnl_amount=pnl_amount,
-                        pnl_percent=pnl_percent,
-                        daily_pnl=self.daily_pnl,
-                        total_capital=await self.get_current_capital()
-                    )
+                    await self.telegram_notifier.send_trade_close_notification({
+                        'pair': pair,
+                        'exit_price': exit_price,
+                        'exit_reason': reason,
+                        'exit_timestamp': datetime.now(),
+                        'duration_formatted': str(datetime.now() - position['entry_time']),
+                        'pnl_amount': pnl_amount,
+                        'pnl_percent': pnl_percent,
+                        'daily_pnl': self.daily_pnl
+                    })
                 
                 # Log Firebase
                 if self.firebase_logger:
@@ -875,7 +870,10 @@ class RSIScalpingBot:
                 
                 # Notification d'erreur
                 if self.telegram_notifier:
-                    await self.telegram_notifier.send_error_notification(str(e), "Boucle principale")
+                    await self.telegram_notifier.send_error_notification({
+                        'message': str(e),
+                        'component': "Boucle principale"
+                    })
                 
                 # Attendre avant de continuer
                 await asyncio.sleep(60)

@@ -131,6 +131,83 @@ class TradeExecutor:
         
         self.logger.info("💼 Trade Executor initialisé")
     
+    async def _format_quantity(self, symbol: str, quantity: float) -> float:
+        """Formate la quantité selon les règles de précision de Binance"""
+        try:
+            symbol_info = await self.data_fetcher.get_symbol_info(symbol)
+            if not symbol_info:
+                self.logger.warning(f"⚠️ Informations symbole non trouvées pour {symbol}, utilisation précision par défaut")
+                return round(quantity, 6)  # Précision par défaut
+            
+            # Récupération du filtre LOT_SIZE pour la précision de quantité
+            step_size = None
+            for filter_info in symbol_info.get('filters', []):
+                if filter_info['filterType'] == 'LOT_SIZE':
+                    step_size = float(filter_info['stepSize'])
+                    break
+            
+            if step_size is None:
+                # Fallback avec baseAssetPrecision si disponible
+                precision = symbol_info.get('baseAssetPrecision', 6)
+                return round(quantity, precision)
+            
+            # Calcul de la précision basée sur stepSize
+            # stepSize = 0.001 → 3 décimales, stepSize = 0.01 → 2 décimales, etc.
+            import math
+            precision = max(0, int(-math.log10(step_size)))
+            
+            # Arrondi selon la règle stepSize (quantité doit être un multiple de stepSize)
+            formatted_quantity = round(quantity / step_size) * step_size
+            
+            # Application de la précision pour éviter les erreurs de virgule flottante
+            formatted_quantity = round(formatted_quantity, precision)
+            
+            self.logger.debug(f"📏 {symbol}: quantité {quantity:.8f} → {formatted_quantity:.8f} (stepSize: {step_size}, precision: {precision})")
+            
+            return formatted_quantity
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur formatage quantité {symbol}: {e}")
+            return round(quantity, 6)  # Précision sécurisée par défaut
+    
+    async def _format_price(self, symbol: str, price: float) -> float:
+        """Formate le prix selon les règles de précision de Binance"""
+        try:
+            symbol_info = await self.data_fetcher.get_symbol_info(symbol)
+            if not symbol_info:
+                self.logger.warning(f"⚠️ Informations symbole non trouvées pour {symbol}, utilisation précision prix par défaut")
+                return round(price, 8)  # Précision par défaut
+            
+            # Récupération du filtre PRICE_FILTER pour la précision de prix
+            tick_size = None
+            for filter_info in symbol_info.get('filters', []):
+                if filter_info['filterType'] == 'PRICE_FILTER':
+                    tick_size = float(filter_info['tickSize'])
+                    break
+            
+            if tick_size is None:
+                # Fallback avec quotePrecision si disponible
+                precision = symbol_info.get('quotePrecision', 8)
+                return round(price, precision)
+            
+            # Calcul de la précision basée sur tickSize
+            import math
+            precision = max(0, int(-math.log10(tick_size)))
+            
+            # Arrondi selon la règle tickSize (prix doit être un multiple de tickSize)
+            formatted_price = round(price / tick_size) * tick_size
+            
+            # Application de la précision pour éviter les erreurs de virgule flottante
+            formatted_price = round(formatted_price, precision)
+            
+            self.logger.debug(f"💰 {symbol}: prix {price:.8f} → {formatted_price:.8f} (tickSize: {tick_size}, precision: {precision})")
+            
+            return formatted_price
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur formatage prix {symbol}: {e}")
+            return round(price, 8)  # Précision sécurisée par défaut
+    
     async def can_open_trade(self, pair: str) -> Tuple[bool, str]:
         """Vérifie si un nouveau trade peut être ouvert"""
         
@@ -230,9 +307,16 @@ class TradeExecutor:
             # Calcul de la quantité
             quantity = position_size_usdc / current_price
             
+            # 🔧 FORMATAGE DE LA QUANTITÉ selon les règles Binance
+            quantity = await self._format_quantity(pair, quantity)
+            
             # Calcul stop loss et take profit
             stop_loss_price = current_price * (1 - self.config.STOP_LOSS_PERCENT / 100)
             take_profit_price = current_price * (1 + self.config.TAKE_PROFIT_PERCENT / 100)
+            
+            # 🔧 FORMATAGE DES PRIX selon les règles Binance
+            stop_loss_price = await self._format_price(pair, stop_loss_price)
+            take_profit_price = await self._format_price(pair, take_profit_price)
             
             # Génération ID trade
             trade_id = f"{pair}_{int(time.time())}"
@@ -356,19 +440,21 @@ class TradeExecutor:
             trade.take_profit_order_id = tp_order['orderId']
             self.logger.info(f"✅ TP automatique placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
             
-            # 2. Ordre Stop Loss (STOP_MARKET)
+            # 2. Ordre Stop Loss (STOP_LOSS_LIMIT)
             sl_order = await self.data_fetcher.place_order(
                 symbol=trade.pair,
                 side="SELL",
-                order_type="STOP_MARKET",
+                order_type="STOP_LOSS_LIMIT",
                 quantity=trade.quantity,
-                stopPrice=trade.stop_loss
+                price=trade.stop_loss,
+                stopPrice=trade.stop_loss,
+                timeInForce='GTC'
             )
             trade.stop_loss_order_id = sl_order['orderId']
             self.logger.info(f"✅ SL automatique placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
             
             # 3. Configuration du Trailing Stop (si activé)
-            if self.trading_config.TRAILING_STOP_ENABLED:
+            if self.config.TRAILING_STOP_ENABLED:
                 await self._setup_trailing_stop(trade)
             
             self.logger.info(f"📊 Ordres automatiques Binance configurés: SL={trade.stop_loss:.6f}, TP={trade.take_profit:.6f}")
@@ -382,7 +468,7 @@ class TradeExecutor:
         """Configure le trailing stop automatique Binance"""
         try:
             # Calculer le seuil d'activation du trailing stop
-            activation_price = trade.entry_price * (1 + self.trading_config.TRAILING_STOP_TRIGGER / 100)
+            activation_price = trade.entry_price * (1 + self.config.TRAILING_STOP_TRIGGER / 100)
             
             # Attendre que le prix atteigne le seuil d'activation
             current_price = await self.data_fetcher.get_current_price(trade.pair)
@@ -394,7 +480,7 @@ class TradeExecutor:
                     side="SELL",
                     order_type="TRAILING_STOP_MARKET",
                     quantity=trade.quantity,
-                    callbackRate=self.trading_config.TRAILING_STOP_DISTANCE
+                    callbackRate=self.config.TRAILING_STOP_DISTANCE
                 )
                 
                 # Annuler l'ancien stop loss fixe
@@ -408,7 +494,7 @@ class TradeExecutor:
                 trade.trailing_stop_order_id = trailing_order['orderId']
                 trade.trailing_stop_active = True
                 
-                self.logger.info(f"🔄 Trailing Stop activé: Delta {self.trading_config.TRAILING_STOP_DISTANCE}% (ID: {trailing_order['orderId']})")
+                self.logger.info(f"🔄 Trailing Stop activé: Delta {self.config.TRAILING_STOP_DISTANCE}% (ID: {trailing_order['orderId']})")
             else:
                 # Programmer une vérification ultérieure
                 trade.trailing_stop_pending = True
@@ -424,7 +510,7 @@ class TradeExecutor:
                 return
             
             current_price = await self.data_fetcher.get_current_price(trade.pair)
-            activation_price = trade.entry_price * (1 + self.trading_config.TRAILING_STOP_TRIGGER / 100)
+            activation_price = trade.entry_price * (1 + self.config.TRAILING_STOP_TRIGGER / 100)
             
             if current_price >= activation_price:
                 await self._setup_trailing_stop(trade)
@@ -437,7 +523,7 @@ class TradeExecutor:
         for trade_id, trade in list(self.active_trades.items()):
             try:
                 # Vérifier activation du trailing stop si en attente
-                if self.trading_config.TRAILING_STOP_ENABLED:
+                if self.config.TRAILING_STOP_ENABLED:
                     await self._check_trailing_stop_activation(trade)
                 
                 await self._check_exit_conditions(trade)
@@ -489,7 +575,7 @@ class TradeExecutor:
                             return
             
             # 5. Trailing Stop (si activé)
-            if self.risk_config.TRAILING_STOP_ENABLED:
+            if self.config.TRAILING_STOP_ENABLED:
                 await self._update_trailing_stop(trade, current_price, current_pnl_percent)
             
         except Exception as e:
@@ -499,10 +585,10 @@ class TradeExecutor:
         """Met à jour le trailing stop"""
         try:
             # Démarrage du trailing stop si profit >= seuil
-            if current_pnl_percent >= self.risk_config.TRAILING_START_PERCENT:
+            if current_pnl_percent >= self.config.TRAILING_START_PERCENT:
                 
                 # Calcul du nouveau stop loss
-                trailing_distance = self.risk_config.TRAILING_STEP_PERCENT / 100
+                trailing_distance = self.config.TRAILING_STEP_PERCENT / 100
                 new_stop_loss = current_price * (1 - trailing_distance)
                 
                 # Mise à jour seulement si le nouveau SL est plus élevé
@@ -695,7 +781,14 @@ class TradeExecutor:
         try:
             # Firebase
             if self.firebase_logger:
-                await self.firebase_logger.log_trade_open(asdict(trade))
+                await self.firebase_logger.log_trade_open(
+                    pair=trade.pair,
+                    entry_price=trade.entry_price,
+                    quantity=trade.quantity,
+                    take_profit=trade.take_profit,
+                    stop_loss=trade.stop_loss,
+                    analysis_data={}  # TODO: Passer les données d'analyse
+                )
             
             # Telegram
             if self.telegram_notifier:
