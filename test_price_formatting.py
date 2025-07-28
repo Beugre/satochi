@@ -25,8 +25,12 @@ async def test_price_formatting():
     config = TradingConfig()
     api_config = APIConfig()
     
-    # Initialisation
-    data_fetcher = DataFetcher(api_config)
+    # Initialisation avec les bonnes clés API
+    data_fetcher = DataFetcher(
+        api_key=api_config.BINANCE_API_KEY,
+        secret_key=api_config.BINANCE_SECRET_KEY,
+        testnet=api_config.BINANCE_TESTNET
+    )
     trade_executor = TradeExecutor(data_fetcher, config, config)
     
     try:

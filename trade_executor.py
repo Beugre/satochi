@@ -678,7 +678,7 @@ class TradeExecutor:
                 stop_loss_price_estimate = trade.stop_loss
                 min_sl_quantity_for_notional = (6.0 / stop_loss_price_estimate) * 1.1  # +10% de marge pour 5 USDC min
                 
-                # 🎯 STRATÉGIE ADAPTATIVE RSI DE RÉPARTITION
+                # 🎯 STRATÉGIE ADAPTATIVE RSI DE RÉPARTITION avec VÉRIFICATION BALANCE
                 # Répartition basée sur les conditions de marché (RSI)
                 if formatted_quantity > min_sl_quantity_for_notional * 1.5:  # Seuil plus bas pour permettre plus de répartitions
                     
@@ -691,9 +691,25 @@ class TradeExecutor:
                         sl_target_quantity = min_sl_quantity_for_notional
                         tp_target_quantity = formatted_quantity - sl_target_quantity
                     
+                    # 🔧 VÉRIFICATION CRITIQUE: S'assurer que TP + SL <= quantité totale
+                    total_allocated = sl_target_quantity + tp_target_quantity
+                    if total_allocated > formatted_quantity:
+                        # Réduction proportionnelle pour respecter la quantité totale
+                        ratio = formatted_quantity / total_allocated
+                        sl_target_quantity = sl_target_quantity * ratio
+                        tp_target_quantity = tp_target_quantity * ratio
+                        self.logger.warning(f"⚠️ {trade.pair} - Ajustement quantités: TP+SL > Total, ratio appliqué: {ratio:.3f}")
+                    
                     # Formatage des quantités finales
                     reserved_sl_quantity = await self._format_quantity(trade.pair, sl_target_quantity)
                     tp_quantity = await self._format_quantity(trade.pair, tp_target_quantity)
+                    
+                    # 🔧 DOUBLE VÉRIFICATION: Après formatage, vérifier que TP + SL <= Total
+                    if reserved_sl_quantity + tp_quantity > formatted_quantity:
+                        # Priorité au TP, ajuster le SL
+                        reserved_sl_quantity = formatted_quantity - tp_quantity
+                        reserved_sl_quantity = max(0, await self._format_quantity(trade.pair, reserved_sl_quantity))
+                        self.logger.warning(f"⚠️ {trade.pair} - Ajustement post-formatage: SL ajusté à {reserved_sl_quantity}")
                     
                     # Vérifier que les quantités formatées sont valides
                     if reserved_sl_quantity > 0 and tp_quantity > 0:
@@ -801,8 +817,30 @@ class TradeExecutor:
         # 🎯 NOUVELLE LOGIQUE: Utiliser la quantité réservée si disponible
         sl_quantity_to_use = sl_reserved_quantity if sl_reserved_quantity is not None else tp_order_quantity
         
-        # Vérification de la valeur NOTIONAL minimale pour SL (éviter erreurs -1013)
+        # 🔧 VÉRIFICATION BALANCE DISPONIBLE avant placement SL
         if sl_quantity_to_use > 0:
+            try:
+                # Récupération du solde actuel pour la paire
+                balance = await self.data_fetcher.get_account_balance()
+                base_asset = trade.pair.replace('USDC', '').replace('USDT', '')  # Extraire l'asset de base (ETH, BTC, etc.)
+                available_quantity = float(balance.get(base_asset, {}).get('free', 0))
+                
+                # Vérifier qu'on a suffisamment de quantité disponible
+                if available_quantity < sl_quantity_to_use:
+                    self.logger.warning(f"⚠️ {trade.pair} - Balance insuffisante pour SL: {available_quantity:.8f} < {sl_quantity_to_use:.8f}")
+                    # Ajuster la quantité SL au maximum disponible
+                    sl_quantity_to_use = min(available_quantity * 0.95, sl_quantity_to_use)  # 95% pour marge de sécurité
+                    sl_quantity_to_use = await self._format_quantity(trade.pair, sl_quantity_to_use)
+                    
+                    if sl_quantity_to_use <= 0:
+                        self.logger.warning(f"⚠️ {trade.pair} - Quantité SL ajustée trop petite, skip SL automatique")
+                        sl_quantity_to_use = 0
+                    else:
+                        self.logger.info(f"🔧 {trade.pair} - Quantité SL ajustée: {sl_quantity_to_use:.8f}")
+                        
+            except Exception as e:
+                self.logger.warning(f"⚠️ Erreur vérification balance {trade.pair}: {e} - Continue avec quantité originale")
+            
             notional_value = sl_quantity_to_use * trade.stop_loss
             if notional_value < 5.0:  # Valeur minimale généralement 5 USDC
                 self.logger.warning(f"⚠️ Valeur SL {trade.pair} trop petite: {notional_value:.2f} USDC < 5 USDC - Skip SL automatique")
@@ -902,8 +940,14 @@ class TradeExecutor:
     async def _check_exit_conditions(self, trade: Trade):
         """Vérifie les conditions de sortie pour un trade"""
         try:
-            # Récupération du prix actuel
+            # Récupération du prix actuel avec gestion d'erreur robuste
             ticker = await self.data_fetcher.get_ticker_price(trade.pair)
+            
+            # Vérification que le ticker contient bien le prix
+            if not ticker or 'price' not in ticker:
+                self.logger.warning(f"⚠️ Prix manquant pour {trade.pair}, skip monitoring")
+                return
+                
             current_price = float(ticker['price'])
             
             # Calcul P&L actuel
