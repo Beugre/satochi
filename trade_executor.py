@@ -7,6 +7,7 @@ Gestionnaire d'exécution des trades avec gestion des risques
 import asyncio
 import logging
 import time
+import pandas as pd
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
@@ -113,6 +114,15 @@ class TradeExecutor:
         self.telegram_notifier = telegram_notifier
         self.logger = logging.getLogger(__name__)
         
+        # Initialisation des indicateurs techniques pour stratégie RSI
+        try:
+            from indicators import TechnicalIndicators
+            self.indicators = TechnicalIndicators(config=config)
+            self.logger.info("📊 Indicateurs techniques RSI initialisés")
+        except ImportError:
+            self.indicators = None
+            self.logger.warning("⚠️ Module indicators non trouvé - Stratégie RSI désactivée")
+        
         # Gestion des trades
         self.active_trades: Dict[str, Trade] = {}
         self.trade_history: List[Trade] = []
@@ -207,6 +217,55 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"❌ Erreur formatage prix {symbol}: {e}")
             return round(price, 8)  # Précision sécurisée par défaut
+    
+    async def get_rsi_distribution_strategy(self, symbol: str) -> Tuple[float, float, str]:
+        """
+        Calcule le RSI et retourne la stratégie de répartition optimale
+        Returns: (sl_percentage, tp_percentage, strategy_name)
+        """
+        try:
+            # Vérifier que les indicateurs sont disponibles
+            if not self.indicators:
+                self.logger.warning(f"⚠️ Indicateurs non disponibles pour {symbol} - Stratégie équilibrée par défaut")
+                return 50.0, 50.0, "Neutre (indicateurs non disponibles)"
+            
+            # Récupération des données historiques (100 bougies pour RSI fiable)
+            klines = await self.data_fetcher.get_klines(symbol, "1h", 100)
+            
+            if not klines or len(klines) < 50:
+                self.logger.warning(f"⚠️ Données insuffisantes pour RSI {symbol} - Stratégie équilibrée par défaut")
+                return 50.0, 50.0, "Neutre (données insuffisantes)"
+            
+            # Extraction des prix de clôture
+            closes = [float(kline[4]) for kline in klines]  # Index 4 = close price
+            closes_series = pd.Series(closes)  # Convertir en Series pandas
+            
+            # Calcul du RSI
+            rsi_values = self.indicators.calculate_rsi(closes_series, period=14)
+            current_rsi = float(rsi_values.iloc[-1])  # Dernier RSI
+            
+            # Stratégie de répartition basée sur RSI
+            if current_rsi > 70:
+                # Marché SURACHETÉ → Privilégier les profits
+                sl_pct, tp_pct = 30.0, 70.0
+                strategy = f"Suracheté (RSI: {current_rsi:.1f})"
+                self.logger.info(f"📈 {symbol} - Marché SURACHETÉ: RSI {current_rsi:.1f} → Privilégier profits (30% SL / 70% TP)")
+            elif current_rsi < 30:
+                # Marché SURVENDU → Protéger le capital
+                sl_pct, tp_pct = 80.0, 20.0
+                strategy = f"Survendu (RSI: {current_rsi:.1f})"
+                self.logger.info(f"📉 {symbol} - Marché SURVENDU: RSI {current_rsi:.1f} → Protéger capital (80% SL / 20% TP)")
+            else:
+                # Marché NEUTRE → Approche équilibrée
+                sl_pct, tp_pct = 50.0, 50.0
+                strategy = f"Neutre (RSI: {current_rsi:.1f})"
+                self.logger.info(f"⚖️ {symbol} - Marché NEUTRE: RSI {current_rsi:.1f} → Approche équilibrée (50% SL / 50% TP)")
+            
+            return sl_pct, tp_pct, strategy
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Erreur calcul RSI pour {symbol}: {e} - Stratégie équilibrée par défaut")
+            return 50.0, 50.0, "Neutre (erreur calcul RSI)"
     
     async def can_open_trade(self, pair: str) -> Tuple[bool, str]:
         """Vérifie si un nouveau trade peut être ouvert"""
@@ -424,108 +483,268 @@ class TradeExecutor:
             return False
     
     async def _setup_exit_orders(self, trade: Trade):
-        """Met en place les ordres de sortie (SL/TP) automatiques dans Binance"""
+        """Met en place les ordres de sortie (SL/TP) automatiques dans Binance - VERSION ULTRA ROBUSTE avec répartition intelligente"""
         try:
-            # CORRECTION: Placement des ordres SL/TP automatiques dans Binance
+            # Vérification des types d'ordres supportés
+            symbol_info = await self.data_fetcher.get_symbol_info(trade.pair)
+            supported_order_types = symbol_info.get('orderTypes', []) if symbol_info else []
             
-            # 1. Ordre Take Profit (LIMIT)
-            tp_order = await self.data_fetcher.place_order(
-                symbol=trade.pair,
-                side="SELL",
-                order_type="LIMIT",
-                quantity=trade.quantity,
-                price=trade.take_profit,
-                timeInForce="GTC"  # Good Till Cancelled
-            )
-            trade.take_profit_order_id = tp_order['orderId']
-            self.logger.info(f"✅ TP automatique placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
+            self.logger.info(f"📋 Types d'ordres supportés pour {trade.pair}: {supported_order_types}")
             
-            # 2. Ordre Stop Loss (STOP_LOSS_LIMIT)
-            sl_order = await self.data_fetcher.place_order(
-                symbol=trade.pair,
-                side="SELL",
-                order_type="STOP_LOSS_LIMIT",
-                quantity=trade.quantity,
-                price=trade.stop_loss,
-                stopPrice=trade.stop_loss,
-                timeInForce='GTC'
-            )
-            trade.stop_loss_order_id = sl_order['orderId']
-            self.logger.info(f"✅ SL automatique placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
+            # 🧠 STRATÉGIE INTELLIGENTE : Calcul de répartition optimale pour SL/TP
+            # Estimation du prix SL pour calculer la valeur NOTIONAL minimale
+            stop_loss_price_estimate = trade.stop_loss
+            min_sl_quantity_for_notional = (6.0 / stop_loss_price_estimate) * 1.1  # +10% de marge pour 5 USDC min
             
-            # 3. Configuration du Trailing Stop (si activé)
-            if self.config.TRAILING_STOP_ENABLED:
-                await self._setup_trailing_stop(trade)
-            
-            self.logger.info(f"📊 Ordres automatiques Binance configurés: SL={trade.stop_loss:.6f}, TP={trade.take_profit:.6f}")
-            
+            # Formatage robuste de la quantité avec vérifications multiples
+            try:
+                formatted_quantity = await self._format_quantity(trade.pair, trade.quantity)
+                
+                # Double vérification - si formatage donne 0, on essaie une approche différente
+                if formatted_quantity <= 0:
+                    try:
+                        # Récupération manuelle des règles de formatage
+                        if symbol_info and 'filters' in symbol_info:
+                            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+                            if lot_size_filter:
+                                step_size = float(lot_size_filter['stepSize'])
+                                # Arrondir à la step_size inférieure
+                                formatted_quantity = (trade.quantity // step_size) * step_size
+                                self.logger.info(f"🔧 Formatage manuel quantité {trade.pair}: {trade.quantity:.8f} → {formatted_quantity:.8f}")
+                    except Exception as e:
+                        self.logger.error(f"❌ Erreur formatage manuel {trade.pair}: {e}")
+                
+                if formatted_quantity <= 0:
+                    self.logger.warning(f"⚠️ Impossible de formater quantité {trade.pair}: {trade.quantity:.8f} → passage en gestion manuelle")
+                    return
+                
+                # 🚀 NOUVELLE STRATÉGIE ADAPTATIVE RSI : Répartition intelligente basée sur les conditions de marché
+                # Calcul de la stratégie optimale selon le RSI
+                sl_percentage, tp_percentage, strategy_name = await self.get_rsi_distribution_strategy(trade.pair)
+                
+                # Calcul des quantités optimales pour garantir SL avec valeur NOTIONAL suffisante
+                
+                # Estimation du prix SL pour calculer la valeur NOTIONAL minimale
+                stop_loss_price_estimate = trade.stop_loss
+                min_sl_quantity_for_notional = (6.0 / stop_loss_price_estimate) * 1.1  # +10% de marge pour 5 USDC min
+                
+                # 🎯 STRATÉGIE ADAPTATIVE RSI DE RÉPARTITION
+                # Répartition basée sur les conditions de marché (RSI)
+                if formatted_quantity > min_sl_quantity_for_notional * 1.5:  # Seuil plus bas pour permettre plus de répartitions
+                    
+                    # Calcul des quantités selon la stratégie RSI
+                    sl_target_quantity = formatted_quantity * (sl_percentage / 100)
+                    tp_target_quantity = formatted_quantity * (tp_percentage / 100)
+                    
+                    # S'assurer que la quantité SL respecte le minimum NOTIONAL
+                    if sl_target_quantity < min_sl_quantity_for_notional:
+                        sl_target_quantity = min_sl_quantity_for_notional
+                        tp_target_quantity = formatted_quantity - sl_target_quantity
+                    
+                    # Formatage des quantités finales
+                    reserved_sl_quantity = await self._format_quantity(trade.pair, sl_target_quantity)
+                    tp_quantity = await self._format_quantity(trade.pair, tp_target_quantity)
+                    
+                    # Vérifier que les quantités formatées sont valides
+                    if reserved_sl_quantity > 0 and tp_quantity > 0:
+                        # Vérifier que la valeur NOTIONAL SL est suffisante
+                        estimated_notional = reserved_sl_quantity * stop_loss_price_estimate
+                        if estimated_notional >= 5.0:
+                            self.logger.info(f"🧠 Stratégie RSI {strategy_name} pour {trade.pair}:")
+                            self.logger.info(f"   📊 Total: {formatted_quantity:.8f}")
+                            self.logger.info(f"   🎯 TP ({tp_percentage:.0f}%): {tp_quantity:.8f}")
+                            self.logger.info(f"   🛡️ SL ({sl_percentage:.0f}%): {reserved_sl_quantity:.8f} (≈{estimated_notional:.2f} USDC)")
+                            
+                            # Utiliser les quantités calculées selon RSI
+                            tp_order_quantity = tp_quantity
+                            sl_reserved_quantity = reserved_sl_quantity
+                        else:
+                            # Quantité SL trop petite en valeur, mode standard
+                            tp_order_quantity = formatted_quantity
+                            sl_reserved_quantity = None
+                            self.logger.info(f"⚠️ Quantité SL RSI {trade.pair} trop petite ({estimated_notional:.2f} USDC < 5 USDC) - Mode standard")
+                    else:
+                        # Formatage échoué, mode standard
+                        tp_order_quantity = formatted_quantity
+                        sl_reserved_quantity = None
+                        self.logger.info(f"⚠️ Formatage quantités RSI {trade.pair} impossible - Mode standard")
+                else:
+                    # Si quantité insuffisante pour diviser selon RSI, utiliser toute la quantité pour TP
+                    tp_order_quantity = formatted_quantity
+                    sl_reserved_quantity = None
+                    self.logger.info(f"⚠️ Quantité {trade.pair} insuffisante pour répartition RSI - Mode standard")
+                    
+            except Exception as e:
+                self.logger.error(f"❌ Erreur formatage quantité {trade.pair}: {e}")
+                tp_order_quantity = trade.quantity
+                sl_reserved_quantity = None
+                
         except Exception as e:
-            self.logger.error(f"❌ Erreur setup ordres automatiques Binance: {e}")
-            # Fallback: gestion manuelle si ordres automatiques échouent
+            self.logger.error(f"❌ Erreur formatage quantité {trade.pair}: {e}")
             self.logger.warning("⚠️ Passage en gestion manuelle des SL/TP")
-    
-    async def _setup_trailing_stop(self, trade: Trade):
-        """Configure le trailing stop automatique Binance"""
-        try:
-            # Calculer le seuil d'activation du trailing stop
-            activation_price = trade.entry_price * (1 + self.config.TRAILING_STOP_TRIGGER / 100)
+            return
+        
+        # 1. Ordre Take Profit - Stratégie robuste avec fallbacks
+        tp_order_placed = False
+        
+        # Essai TAKE_PROFIT_LIMIT d'abord (recommandé pour Spot)
+        if 'TAKE_PROFIT_LIMIT' in supported_order_types and tp_order_quantity > 0:
+            try:
+                    tp_order = await self.data_fetcher.place_order(
+                        symbol=trade.pair,
+                        side="SELL",
+                        order_type="TAKE_PROFIT_LIMIT",
+                        quantity=tp_order_quantity,
+                        price=trade.take_profit,
+                        stopPrice=trade.take_profit,
+                        timeInForce="GTC"
+                    )
+                    trade.take_profit_order_id = tp_order['orderId']
+                    self.logger.info(f"✅ TP automatique (TAKE_PROFIT_LIMIT) placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
+                    tp_order_placed = True
+            except Exception as e:
+                    self.logger.error(f"❌ Erreur TAKE_PROFIT_LIMIT: {e}")
             
-            # Attendre que le prix atteigne le seuil d'activation
-            current_price = await self.data_fetcher.get_current_price(trade.pair)
+        # Fallback: TAKE_PROFIT (SANS timeInForce - pas supporté)
+        if not tp_order_placed and 'TAKE_PROFIT' in supported_order_types and tp_order_quantity > 0:
+            try:
+                    tp_order = await self.data_fetcher.place_order(
+                        symbol=trade.pair,
+                        side="SELL",
+                        order_type="TAKE_PROFIT",
+                        quantity=tp_order_quantity,
+                        stopPrice=trade.take_profit
+                        # timeInForce pas supporté pour TAKE_PROFIT
+                    )
+                    trade.take_profit_order_id = tp_order['orderId']
+                    self.logger.info(f"✅ TP automatique (TAKE_PROFIT) placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
+                    tp_order_placed = True
+            except Exception as e:
+                    self.logger.error(f"❌ Erreur TAKE_PROFIT: {e}")    
             
-            if current_price >= activation_price:
-                # Placer l'ordre trailing stop
-                trailing_order = await self.data_fetcher.place_order(
+        # Fallback final: LIMIT classique
+        if not tp_order_placed and 'LIMIT' in supported_order_types and tp_order_quantity > 0:
+            try:
+                tp_order = await self.data_fetcher.place_order(
                     symbol=trade.pair,
                     side="SELL",
-                    order_type="TRAILING_STOP_MARKET",
-                    quantity=trade.quantity,
-                    callbackRate=self.config.TRAILING_STOP_DISTANCE
+                    order_type="LIMIT",
+                    quantity=tp_order_quantity,
+                    price=trade.take_profit,
+                    timeInForce="GTC"
                 )
-                
-                # Annuler l'ancien stop loss fixe
-                if trade.stop_loss_order_id:
-                    try:
-                        await self.data_fetcher.cancel_order(trade.pair, trade.stop_loss_order_id)
-                        self.logger.info(f"🗑️ Stop Loss fixe annulé (remplacé par trailing)")
-                    except Exception as e:
-                        self.logger.warning(f"⚠️ Erreur annulation SL fixe: {e}")
-                
-                trade.trailing_stop_order_id = trailing_order['orderId']
-                trade.trailing_stop_active = True
-                
-                self.logger.info(f"🔄 Trailing Stop activé: Delta {self.config.TRAILING_STOP_DISTANCE}% (ID: {trailing_order['orderId']})")
+                trade.take_profit_order_id = tp_order['orderId']
+                self.logger.info(f"✅ TP automatique (LIMIT) placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
+                tp_order_placed = True
+            except Exception as e:
+                self.logger.error(f"❌ Erreur ordre TP LIMIT: {e}")
+        
+        if not tp_order_placed:
+            self.logger.warning(f"⚠️ Impossible de placer TP automatique pour {trade.pair}")
+        
+        # 2. Ordre Stop Loss avec Trailing Stop - Version ultra robuste avec logique intelligente
+        sl_order_placed = False
+        
+        # Conversion du pourcentage en BIPS pour trailing stop (ex: 0.3% -> 30 BIPS)
+        trailing_delta_bips = int(self.config.TRAILING_STOP_DISTANCE * 100) if self.config.TRAILING_STOP_ENABLED else None
+        
+        # 🎯 NOUVELLE LOGIQUE: Utiliser la quantité réservée si disponible
+        sl_quantity_to_use = sl_reserved_quantity if sl_reserved_quantity is not None else tp_order_quantity
+        
+        # Vérification de la valeur NOTIONAL minimale pour SL (éviter erreurs -1013)
+        if sl_quantity_to_use > 0:
+            notional_value = sl_quantity_to_use * trade.stop_loss
+            if notional_value < 5.0:  # Valeur minimale généralement 5 USDC
+                self.logger.warning(f"⚠️ Valeur SL {trade.pair} trop petite: {notional_value:.2f} USDC < 5 USDC - Skip SL automatique")
+                sl_quantity_to_use = 0
             else:
-                # Programmer une vérification ultérieure
-                trade.trailing_stop_pending = True
-                self.logger.info(f"⏳ Trailing Stop en attente - Prix cible: {activation_price:.6f}")
-                
-        except Exception as e:
-            self.logger.error(f"❌ Erreur setup trailing stop: {e}")
-    
-    async def _check_trailing_stop_activation(self, trade: Trade):
-        """Vérifie si le trailing stop doit être activé"""
-        try:
-            if not trade.trailing_stop_pending or trade.trailing_stop_active:
-                return
+                if sl_reserved_quantity is not None:
+                    self.logger.info(f"✅ Utilisation quantité SL réservée: {sl_quantity_to_use:.8f} (≈{notional_value:.2f} USDC)")
+                else:
+                    self.logger.info(f"✅ Valeur SL {trade.pair} suffisante: {notional_value:.2f} USDC")
             
-            current_price = await self.data_fetcher.get_current_price(trade.pair)
-            activation_price = trade.entry_price * (1 + self.config.TRAILING_STOP_TRIGGER / 100)
+            # Essai STOP_LOSS_LIMIT avec trailing stop d'abord (recommandé pour Spot)
+            if 'STOP_LOSS_LIMIT' in supported_order_types and sl_quantity_to_use > 0:
+                try:
+                    order_params = {
+                        'symbol': trade.pair,
+                        'side': "SELL",
+                        'order_type': "STOP_LOSS_LIMIT",
+                        'quantity': sl_quantity_to_use,
+                        'price': trade.stop_loss,
+                        'timeInForce': 'GTC'
+                    }
+                    
+                    # Ajout du trailing stop si activé
+                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
+                        order_params['trailingDelta'] = trailing_delta_bips
+                        # Pour un trailing stop, stopPrice est optionnel - omis pour démarrage immédiat
+                        self.logger.info(f"📈 Trailing Stop activé: {self.config.TRAILING_STOP_DISTANCE}% ({trailing_delta_bips} BIPS)")
+                    else:
+                        order_params['stopPrice'] = trade.stop_loss
+                    
+                    sl_order = await self.data_fetcher.place_order(**order_params)
+                    trade.stop_loss_order_id = sl_order['orderId']
+                    
+                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
+                        trade.trailing_stop_active = True
+                        self.logger.info(f"✅ SL automatique avec Trailing Stop (STOP_LOSS_LIMIT) placé: {self.config.TRAILING_STOP_DISTANCE}% trailing (ID: {sl_order['orderId']})")
+                    else:
+                        self.logger.info(f"✅ SL automatique (STOP_LOSS_LIMIT) placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
+                    
+                    sl_order_placed = True
+                except Exception as e:
+                    self.logger.error(f"❌ Erreur STOP_LOSS_LIMIT: {e}")
             
-            if current_price >= activation_price:
-                await self._setup_trailing_stop(trade)
-                
-        except Exception as e:
-            self.logger.error(f"❌ Erreur vérification trailing stop: {e}")
+            # Fallback: Essai STOP_LOSS si STOP_LOSS_LIMIT échoue (SANS timeInForce)
+            if not sl_order_placed and 'STOP_LOSS' in supported_order_types and sl_quantity_to_use > 0:
+                try:
+                    order_params = {
+                        'symbol': trade.pair,
+                        'side': "SELL",
+                        'order_type': "STOP_LOSS",
+                        'quantity': sl_quantity_to_use
+                        # timeInForce pas supporté pour STOP_LOSS
+                    }
+                    
+                    # Ajout du trailing stop si activé
+                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
+                        order_params['trailingDelta'] = trailing_delta_bips
+                        # Pour un trailing stop, stopPrice est optionnel
+                        self.logger.info(f"📈 Trailing Stop activé: {self.config.TRAILING_STOP_DISTANCE}% ({trailing_delta_bips} BIPS)")
+                    else:
+                        order_params['stopPrice'] = trade.stop_loss
+                    
+                    sl_order = await self.data_fetcher.place_order(**order_params)
+                    trade.stop_loss_order_id = sl_order['orderId']
+                    
+                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
+                        trade.trailing_stop_active = True
+                        self.logger.info(f"✅ SL automatique avec Trailing Stop (STOP_LOSS) placé: {self.config.TRAILING_STOP_DISTANCE}% trailing (ID: {sl_order['orderId']})")
+                    else:
+                        self.logger.info(f"✅ SL automatique (STOP_LOSS) placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
+                    
+                    sl_order_placed = True
+                except Exception as e:
+                    self.logger.error(f"❌ Erreur STOP_LOSS: {e}")
+            
+            if not sl_order_placed:
+                self.logger.warning(f"⚠️ Impossible de placer SL automatique pour {trade.pair} - Gestion manuelle activée")
+            
+            # 3. Logging des résultats
+            if tp_order_placed and sl_order_placed:
+                self.logger.info(f"📊 Ordres automatiques TP et SL configurés pour {trade.pair}")
+            elif tp_order_placed:
+                self.logger.info(f"📊 Ordre TP automatique configuré pour {trade.pair} - SL en gestion manuelle")
+            elif sl_order_placed:
+                self.logger.info(f"📊 Ordre SL automatique configuré pour {trade.pair} - TP en gestion manuelle")
+            else:
+                self.logger.warning(f"⚠️ Aucun ordre automatique pour {trade.pair} - Surveillance manuelle requise")
     
     async def monitor_positions(self):
         """Surveille les positions ouvertes"""
         for trade_id, trade in list(self.active_trades.items()):
             try:
-                # Vérifier activation du trailing stop si en attente
-                if self.config.TRAILING_STOP_ENABLED:
-                    await self._check_trailing_stop_activation(trade)
-                
                 await self._check_exit_conditions(trade)
             except Exception as e:
                 self.logger.error(f"❌ Erreur monitoring {trade.pair}: {e}")
@@ -574,40 +793,8 @@ class TradeExecutor:
                             await self._close_trade(trade, current_price, ExitReason.EARLY_EXIT)
                             return
             
-            # 5. Trailing Stop (si activé)
-            if self.config.TRAILING_STOP_ENABLED:
-                await self._update_trailing_stop(trade, current_price, current_pnl_percent)
-            
         except Exception as e:
             self.logger.error(f"❌ Erreur vérification conditions sortie {trade.pair}: {e}")
-    
-    async def _update_trailing_stop(self, trade: Trade, current_price: float, current_pnl_percent: float):
-        """Met à jour le trailing stop"""
-        try:
-            # Démarrage du trailing stop si profit >= seuil
-            if current_pnl_percent >= self.config.TRAILING_START_PERCENT:
-                
-                # Calcul du nouveau stop loss
-                trailing_distance = self.config.TRAILING_STEP_PERCENT / 100
-                new_stop_loss = current_price * (1 - trailing_distance)
-                
-                # Mise à jour seulement si le nouveau SL est plus élevé
-                if new_stop_loss > trade.stop_loss:
-                    old_stop_loss = trade.stop_loss
-                    trade.stop_loss = new_stop_loss
-                    
-                    self.logger.info(f"🔄 Trailing stop mis à jour {trade.pair}: {old_stop_loss:.6f} -> {new_stop_loss:.6f}")
-                    
-                    # Notification Telegram
-                    if self.telegram_notifier:
-                        await self.telegram_notifier.send_position_update({
-                            'pair': trade.pair,
-                            'current_pnl': current_pnl_percent,
-                            'trailing_stop': new_stop_loss
-                        })
-                        
-        except Exception as e:
-            self.logger.error(f"❌ Erreur trailing stop {trade.pair}: {e}")
     
     async def _close_trade(self, trade: Trade, exit_price: float, exit_reason: ExitReason):
         """Ferme un trade"""

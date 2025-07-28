@@ -488,6 +488,142 @@ class DataFetcher:
             self.logger.error(f"❌ Erreur placement ordre {symbol}: {e}")
             raise
     
+    async def place_oco_order(self, symbol: str, side: str, quantity: float, price: float, stopPrice: float, stopLimitPrice: float) -> Dict:
+        """Place un ordre OCO (One-Cancels-Other) sur Binance"""
+        try:
+            if self.binance_client:
+                # Formatage des quantités et prix
+                quantity = await self._format_quantity_for_symbol(symbol, quantity)
+                price = await self._format_price_for_symbol(symbol, price)
+                stopPrice = await self._format_price_for_symbol(symbol, stopPrice)
+                stopLimitPrice = await self._format_price_for_symbol(symbol, stopLimitPrice)
+                
+                order = self.binance_client.create_oco_order(
+                    symbol=symbol,
+                    side=side,
+                    quantity=quantity,
+                    price=price,
+                    stopPrice=stopPrice,
+                    stopLimitPrice=stopLimitPrice,
+                    stopLimitTimeInForce='GTC'
+                )
+                return order
+                
+            else:
+                raise Exception("OCO orders nécessitent le client Binance")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur placement ordre OCO {symbol}: {e}")
+            raise
+    
+    async def _format_quantity_for_symbol(self, symbol: str, quantity: float) -> float:
+        """Formate la quantité selon les règles du symbole"""
+        try:
+            symbol_info = await self.get_symbol_info(symbol)
+            if not symbol_info:
+                return round(quantity, 6)
+            
+            # Récupération du filtre LOT_SIZE
+            step_size = None
+            for filter_info in symbol_info.get('filters', []):
+                if filter_info['filterType'] == 'LOT_SIZE':
+                    step_size = float(filter_info['stepSize'])
+                    break
+            
+            if step_size is None:
+                precision = symbol_info.get('baseAssetPrecision', 6)
+                return round(quantity, precision)
+            
+            # Calcul précision et formatage
+            import math
+            precision = max(0, int(-math.log10(step_size)))
+            formatted_quantity = round(quantity / step_size) * step_size
+            return round(formatted_quantity, precision)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur formatage quantité {symbol}: {e}")
+            return round(quantity, 6)
+    
+    async def _format_price_for_symbol(self, symbol: str, price: float) -> float:
+        """Formate le prix selon les règles du symbole"""
+        try:
+            symbol_info = await self.get_symbol_info(symbol)
+            if not symbol_info:
+                return round(price, 8)
+            
+            # Récupération du filtre PRICE_FILTER
+            tick_size = None
+            for filter_info in symbol_info.get('filters', []):
+                if filter_info['filterType'] == 'PRICE_FILTER':
+                    tick_size = float(filter_info['tickSize'])
+                    break
+            
+            if tick_size is None:
+                precision = symbol_info.get('quotePrecision', 8)
+                return round(price, precision)
+            
+            # Calcul précision et formatage
+            import math
+            precision = max(0, int(-math.log10(tick_size)))
+            formatted_price = round(price / tick_size) * tick_size
+            return round(formatted_price, precision)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur formatage prix {symbol}: {e}")
+            return round(price, 8)
+    
+    async def get_orders(self, symbol: str, start_time: int = None) -> List[Dict]:
+        """Récupère tous les ordres pour un symbole"""
+        try:
+            if self.binance_client:
+                params = {
+                    'symbol': symbol,
+                    'limit': 50
+                }
+                if start_time:
+                    params['startTime'] = start_time
+                    
+                orders = self.binance_client.get_all_orders(**params)
+                return orders
+            
+            elif self.ccxt_client:
+                # Conversion au format CCXT
+                ccxt_symbol = symbol.replace('USDC', '/USDC')
+                orders = await self.ccxt_client.fetch_orders(ccxt_symbol)
+                
+                # Conversion au format Binance pour compatibilité
+                binance_orders = []
+                for order in orders:
+                    binance_orders.append({
+                        'symbol': symbol,
+                        'orderId': order['id'],
+                        'orderListId': -1,
+                        'clientOrderId': order.get('clientOrderId', ''),
+                        'price': str(order.get('price', 0)),
+                        'origQty': str(order.get('amount', 0)),
+                        'executedQty': str(order.get('filled', 0)),
+                        'cummulativeQuoteQty': str(order.get('cost', 0)),
+                        'status': order.get('status', 'UNKNOWN').upper(),
+                        'timeInForce': 'GTC',
+                        'type': order.get('type', 'LIMIT').upper(),
+                        'side': order.get('side', 'BUY').upper(),
+                        'stopPrice': str(order.get('stopPrice', 0)),
+                        'icebergQty': '0',
+                        'time': int(order.get('timestamp', 0)),
+                        'updateTime': int(order.get('lastTradeTimestamp', 0)),
+                        'isWorking': order.get('status') in ['open', 'pending']
+                    })
+                
+                return binance_orders
+            
+            else:
+                self.logger.error("❌ Aucun client disponible pour récupérer les ordres")
+                return []
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur récupération ordres {symbol}: {e}")
+            return []
+    
     async def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """Annule un ordre"""
         try:
