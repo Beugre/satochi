@@ -97,6 +97,24 @@ class TradingConfig:
     TRADING_END_HOUR: int = 22                  # Fin trading (22h UTC)
     WEEKEND_TRADING_ENABLED: bool = True        # Trading week-end
     
+    # 🧠 SORTIE INTELLIGENTE RSI + TEMPS
+    INTELLIGENT_EXIT_ENABLED: bool = True       # Activation sortie intelligente
+    INTELLIGENT_EXIT_PHASE1_DURATION: int = 15  # Phase 1: 0-15 minutes (protection)
+    INTELLIGENT_EXIT_PHASE2_DURATION: int = 45  # Phase 2: 15-45 minutes (rentabilité)
+    INTELLIGENT_EXIT_PHASE3_DURATION: int = 120 # Phase 3: 45-120 minutes (conservateur)
+    INTELLIGENT_EXIT_PHASE4_TIMEOUT: int = 120  # Phase 4: timeout obligatoire (minutes)
+    
+    # Seuils P&L pour sortie intelligente
+    INTELLIGENT_EXIT_PROTECTION_LOSS: float = -0.8    # Phase 1: protection -0.8%
+    INTELLIGENT_EXIT_PROFIT_THRESHOLD: float = 0.6    # Phase 2: seuil +0.6%
+    INTELLIGENT_EXIT_SMALL_PROFIT: float = 0.3        # Phase 3: petit profit +0.3%
+    
+    # Seuils RSI pour sortie intelligente
+    INTELLIGENT_EXIT_RSI_EXTREME_HIGH: float = 75.0   # RSI très haut (sortie)
+    INTELLIGENT_EXIT_RSI_EXTREME_LOW: float = 25.0    # RSI très bas (sortie)
+    INTELLIGENT_EXIT_RSI_HIGH: float = 70.0           # RSI haut (sortie conservateur)
+    INTELLIGENT_EXIT_RSI_LOW: float = 30.0            # RSI bas (sortie conservateur)
+
     # 🚫 FILTRES
     BLACKLISTED_SYMBOLS: List[str] = field(default_factory=lambda: ["XRPUSDC", "DOGEUSDC", "PEPEUSDC"])  # Symboles interdits
     BLACKLISTED_PAIRS: List[str] = field(default_factory=list)                                          # Paires interdites (alias)

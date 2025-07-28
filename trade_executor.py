@@ -36,6 +36,7 @@ class ExitReason(Enum):
     STOP_LOSS = "STOP_LOSS"
     TIMEOUT = "TIMEOUT"
     EARLY_EXIT = "EARLY_EXIT"
+    INTELLIGENT_EXIT = "INTELLIGENT_EXIT"  # Nouvelle sortie intelligente basée RSI + temps
     MANUAL = "MANUAL"
     ERROR = "ERROR"
 
@@ -266,6 +267,117 @@ class TradeExecutor:
         except Exception as e:
             self.logger.warning(f"⚠️ Erreur calcul RSI pour {symbol}: {e} - Stratégie équilibrée par défaut")
             return 50.0, 50.0, "Neutre (erreur calcul RSI)"
+    
+    async def _get_current_rsi(self, symbol: str) -> Optional[float]:
+        """
+        Récupère le RSI actuel pour surveillance en temps réel
+        Returns: RSI actuel ou None si erreur
+        """
+        try:
+            if not self.indicators:
+                return None
+            
+            # Récupération des données récentes (50 bougies suffisent pour RSI)
+            klines = await self.data_fetcher.get_klines(symbol, "1h", 50)
+            
+            if not klines or len(klines) < 20:
+                return None
+            
+            # Extraction des prix de clôture
+            closes = [float(kline[4]) for kline in klines]  # Index 4 = close price
+            closes_series = pd.Series(closes)
+            
+            # Calcul du RSI
+            rsi_values = self.indicators.calculate_rsi(closes_series, period=14)
+            current_rsi = float(rsi_values.iloc[-1])
+            
+            return current_rsi
+            
+        except Exception as e:
+            self.logger.debug(f"⚠️ Erreur calcul RSI temps réel {symbol}: {e}")
+            return None
+    
+    async def _check_intelligent_exit_conditions(self, trade: Trade, current_price: float, current_pnl_percent: float) -> Optional[str]:
+        """
+        🧠 GESTION INTELLIGENTE DES POSITIONS - Analyse RSI + Temps pour sortie optimale
+        Returns: Raison de sortie ou None si position doit continuer
+        """
+        try:
+            # Vérification si la sortie intelligente est activée
+            if not self.config.INTELLIGENT_EXIT_ENABLED:
+                return None
+            
+            # Calcul du temps écoulé en minutes
+            duration_minutes = (datetime.now() - trade.timestamp).total_seconds() / 60
+            
+            # Récupération du RSI actuel
+            current_rsi = await self._get_current_rsi(trade.pair)
+            
+            # 🔴 PHASE 1: 0-X minutes - Protection capitale prioritaire
+            if duration_minutes <= self.config.INTELLIGENT_EXIT_PHASE1_DURATION:
+                # Protection contre chute rapide
+                if current_pnl_percent < self.config.INTELLIGENT_EXIT_PROTECTION_LOSS:
+                    self.logger.info(f"🚨 {trade.pair} - Sortie anticipée (0-{self.config.INTELLIGENT_EXIT_PHASE1_DURATION}min): P&L {current_pnl_percent:.2f}% < {self.config.INTELLIGENT_EXIT_PROTECTION_LOSS}%")
+                    return f"Perte rapide ({self.config.INTELLIGENT_EXIT_PROTECTION_LOSS}%)"
+                
+                # RSI très défavorable = sortie immédiate
+                if current_rsi is not None:
+                    if (trade.rsi_value and trade.rsi_value < 50 and current_rsi > self.config.INTELLIGENT_EXIT_RSI_EXTREME_HIGH) or \
+                       (trade.rsi_value and trade.rsi_value > 50 and current_rsi < self.config.INTELLIGENT_EXIT_RSI_EXTREME_LOW):
+                        self.logger.info(f"📊 {trade.pair} - Sortie RSI critique (0-{self.config.INTELLIGENT_EXIT_PHASE1_DURATION}min): RSI {trade.rsi_value:.1f}→{current_rsi:.1f}")
+                        return f"RSI critique ({current_rsi:.1f})"
+            
+            # 🟡 PHASE 2: X-Y minutes - Seuil de rentabilité
+            elif self.config.INTELLIGENT_EXIT_PHASE1_DURATION < duration_minutes <= self.config.INTELLIGENT_EXIT_PHASE2_DURATION:
+                # Seuil acceptable atteint → Trailing stop agressif
+                if current_pnl_percent >= self.config.INTELLIGENT_EXIT_PROFIT_THRESHOLD:
+                    # Laisser courir avec trailing stop (géré par Binance)
+                    self.logger.info(f"✅ {trade.pair} - Seuil +{self.config.INTELLIGENT_EXIT_PROFIT_THRESHOLD}% atteint ({current_pnl_percent:.2f}%) - Trailing actif")
+                    return None  # Continue avec trailing stop
+                
+                # Zone neutre + RSI défavorable = sortie break-even
+                if 0 <= current_pnl_percent < self.config.INTELLIGENT_EXIT_PROFIT_THRESHOLD and current_rsi is not None:
+                    # RSI devient défavorable par rapport à l'entrée
+                    rsi_deterioration = False
+                    if trade.rsi_value:
+                        if trade.rsi_value < 50 and current_rsi > self.config.INTELLIGENT_EXIT_RSI_HIGH:  # Entrée survendu → devient suracheté
+                            rsi_deterioration = True
+                        elif trade.rsi_value > 50 and current_rsi < self.config.INTELLIGENT_EXIT_RSI_LOW:  # Entrée suracheté → devient survendu
+                            rsi_deterioration = True
+                    
+                    if rsi_deterioration:
+                        self.logger.info(f"📊 {trade.pair} - Sortie RSI défavorable ({self.config.INTELLIGENT_EXIT_PHASE1_DURATION}-{self.config.INTELLIGENT_EXIT_PHASE2_DURATION}min): RSI {trade.rsi_value:.1f}→{current_rsi:.1f}, P&L {current_pnl_percent:.2f}%")
+                        return f"RSI défavorable ({current_rsi:.1f})"
+            
+            # 🟠 PHASE 3: Y-Z minutes - Mode conservateur
+            elif self.config.INTELLIGENT_EXIT_PHASE2_DURATION < duration_minutes <= self.config.INTELLIGENT_EXIT_PHASE3_DURATION:
+                # Petit profit = sortie sécurisée
+                if current_pnl_percent >= self.config.INTELLIGENT_EXIT_SMALL_PROFIT:
+                    self.logger.info(f"💰 {trade.pair} - Sortie petit profit ({self.config.INTELLIGENT_EXIT_PHASE2_DURATION}-{self.config.INTELLIGENT_EXIT_PHASE3_DURATION}min): P&L {current_pnl_percent:.2f}%")
+                    return f"Petit profit sécurisé ({current_pnl_percent:.2f}%)"
+                
+                # RSI défavorable = sortie prioritaire
+                if current_rsi is not None and trade.rsi_value:
+                    rsi_very_unfavorable = False
+                    if trade.rsi_value < 40 and current_rsi > self.config.INTELLIGENT_EXIT_RSI_EXTREME_HIGH:  # Forte détérioration
+                        rsi_very_unfavorable = True
+                    elif trade.rsi_value > 60 and current_rsi < self.config.INTELLIGENT_EXIT_RSI_EXTREME_LOW:  # Forte détérioration
+                        rsi_very_unfavorable = True
+                    
+                    if rsi_very_unfavorable:
+                        self.logger.info(f"📊 {trade.pair} - Sortie RSI très défavorable ({self.config.INTELLIGENT_EXIT_PHASE2_DURATION}-{self.config.INTELLIGENT_EXIT_PHASE3_DURATION}min): RSI {trade.rsi_value:.1f}→{current_rsi:.1f}")
+                        return f"RSI très défavorable ({current_rsi:.1f})"
+            
+            # 🔴 PHASE 4: Z+ minutes - Timeout obligatoire
+            elif duration_minutes > self.config.INTELLIGENT_EXIT_PHASE4_TIMEOUT:
+                self.logger.info(f"⏰ {trade.pair} - Timeout {self.config.INTELLIGENT_EXIT_PHASE4_TIMEOUT//60}h atteint: P&L {current_pnl_percent:.2f}%")
+                return f"Timeout {self.config.INTELLIGENT_EXIT_PHASE4_TIMEOUT//60}h (P&L: {current_pnl_percent:.2f}%)"
+            
+            return None  # Continuer la position
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur vérification sortie intelligente {trade.pair}: {e}")
+            return None
     
     async def can_open_trade(self, pair: str) -> Tuple[bool, str]:
         """Vérifie si un nouveau trade peut être ouvert"""
@@ -759,17 +871,23 @@ class TradeExecutor:
             # Calcul P&L actuel
             current_pnl_percent = ((current_price - trade.entry_price) / trade.entry_price) * 100
             
-            # 1. Vérification Take Profit
+            # 🧠 NOUVELLE PRIORITÉ 1: Vérification sortie intelligente RSI + Temps
+            intelligent_exit_reason = await self._check_intelligent_exit_conditions(trade, current_price, current_pnl_percent)
+            if intelligent_exit_reason:
+                await self._close_trade(trade, current_price, ExitReason.INTELLIGENT_EXIT)
+                return
+            
+            # 2. Vérification Take Profit (unchanged)
             if current_price >= trade.take_profit:
                 await self._close_trade(trade, current_price, ExitReason.TAKE_PROFIT)
                 return
             
-            # 2. Vérification Stop Loss
+            # 3. Vérification Stop Loss (unchanged)
             if current_price <= trade.stop_loss:
                 await self._close_trade(trade, current_price, ExitReason.STOP_LOSS)
                 return
             
-            # 3. Vérification timeout adaptatif
+            # 4. Vérification timeout adaptatif (unchanged - backup uniquement)
             if self.config.TIMEOUT_ENABLED:
                 duration = (datetime.now() - trade.timestamp).total_seconds() / 60  # en minutes
                 if (duration >= self.config.TIMEOUT_MINUTES and
@@ -777,7 +895,7 @@ class TradeExecutor:
                     await self._close_trade(trade, current_price, ExitReason.TIMEOUT)
                     return
             
-            # 4. Vérification sortie anticipée
+            # 5. Vérification sortie anticipée (unchanged - backup uniquement)
             if self.config.EARLY_EXIT_ENABLED:
                 duration_minutes = (datetime.now() - trade.timestamp).total_seconds() / 60
                 
