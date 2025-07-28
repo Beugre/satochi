@@ -173,7 +173,26 @@ class TradeExecutor:
             # Application de la précision pour éviter les erreurs de virgule flottante
             formatted_quantity = round(formatted_quantity, precision)
             
-            self.logger.debug(f"📏 {symbol}: quantité {quantity:.8f} → {formatted_quantity:.8f} (stepSize: {step_size}, precision: {precision})")
+            # 🔧 PROTECTION CONTRE NOTATION SCIENTIFIQUE et VALIDATION FORMAT BINANCE
+            # Conversion en string pour vérifier le format
+            quantity_str = f"{formatted_quantity:.{precision}f}"
+            
+            # Vérification que la quantité respecte le format Binance (pas de notation scientifique)
+            if 'e' in quantity_str.lower() or 'E' in quantity_str:
+                # Si notation scientifique détectée, utiliser format décimal forcé
+                formatted_quantity = float(f"{formatted_quantity:.{min(precision, 20)}f}")
+                quantity_str = f"{formatted_quantity:.{min(precision, 20)}f}"
+                self.logger.debug(f"� {symbol}: notation scientifique évitée - quantité formatée: {quantity_str}")
+            
+            # Validation finale que le string respecte le pattern Binance
+            import re
+            if not re.match(r'^([0-9]{1,20})(\.[0-9]{1,20})?$', quantity_str):
+                # Format invalide, utilisation quantité arrondie simple
+                safe_precision = min(8, precision)
+                formatted_quantity = round(quantity, safe_precision)
+                self.logger.warning(f"⚠️ {symbol}: format quantité invalide, utilisation précision sécurisée: {safe_precision}")
+            
+            self.logger.debug(f"�📏 {symbol}: quantité {quantity:.8f} → {formatted_quantity:.{precision}f} (stepSize: {step_size}, precision: {precision})")
             
             return formatted_quantity
             
@@ -211,7 +230,26 @@ class TradeExecutor:
             # Application de la précision pour éviter les erreurs de virgule flottante
             formatted_price = round(formatted_price, precision)
             
-            self.logger.debug(f"💰 {symbol}: prix {price:.8f} → {formatted_price:.8f} (tickSize: {tick_size}, precision: {precision})")
+            # 🔧 PROTECTION CONTRE NOTATION SCIENTIFIQUE et VALIDATION FORMAT BINANCE
+            # Conversion en string pour vérifier le format
+            price_str = f"{formatted_price:.{precision}f}"
+            
+            # Vérification que le prix respecte le format Binance (pas de notation scientifique)
+            if 'e' in price_str.lower() or 'E' in price_str:
+                # Si notation scientifique détectée, utiliser format décimal forcé
+                formatted_price = float(f"{formatted_price:.{min(precision, 20)}f}")
+                price_str = f"{formatted_price:.{min(precision, 20)}f}"
+                self.logger.debug(f"🔧 {symbol}: notation scientifique évitée - prix formaté: {price_str}")
+            
+            # Validation finale que le string respecte le pattern Binance
+            import re
+            if not re.match(r'^([0-9]{1,20})(\.[0-9]{1,20})?$', price_str):
+                # Format invalide, utilisation prix arrondi simple
+                safe_precision = min(8, precision)
+                formatted_price = round(price, safe_precision)
+                self.logger.warning(f"⚠️ {symbol}: format prix invalide, utilisation précision sécurisée: {safe_precision}")
+            
+            self.logger.debug(f"💰 {symbol}: prix {price:.8f} → {formatted_price:.{precision}f} (tickSize: {tick_size}, precision: {precision})")
             
             return formatted_price
             

@@ -116,13 +116,18 @@ class TradingConfig:
     INTELLIGENT_EXIT_RSI_LOW: float = 30.0            # RSI bas (sortie conservateur)
 
     # 🚫 FILTRES
-    BLACKLISTED_SYMBOLS: List[str] = field(default_factory=lambda: ["XRPUSDC", "DOGEUSDC", "PEPEUSDC"])  # Symboles interdits
+    BLACKLISTED_SYMBOLS: List[str] = field(default_factory=lambda: ["XRPUSDC", "DOGEUSDC", "PEPEUSDC"])  # Symboles interdits (PEPE ajouté pour problèmes formatage prix)
     BLACKLISTED_PAIRS: List[str] = field(default_factory=list)                                          # Paires interdites (alias)
     PRIORITY_PAIRS: List[str] = field(default_factory=lambda: ["BTCUSDC", "ETHUSDC", "SOLUSDC", "ADAUSDC", "DOTUSDC"])  # Paires prioritaires
     MAX_PAIRS_PER_SCAN: int = 7                             # Limite à 7 paires par scan
     MIN_VOLUME_USDC: float = 40000000.0                     # Volume min USDC
     MAX_SPREAD_PERCENT: float = 0.15                        # Spread max 0.15%
     MIN_VOLATILITY_PERCENT: float = 0.7                     # Volatilité min 0.7%
+    
+    # 🔧 GESTION TOKENS MICRO-PRIX (MEME COINS)
+    MIN_PRICE_USDC: float = 0.00001                        # Prix minimum 0.00001 USDC (évite tokens trop volatils)
+    MAX_PRICE_PRECISION: int = 20                           # Précision maximale autorisée (évite erreurs formatage)
+    MICRO_PRICE_SYMBOLS: List[str] = field(default_factory=lambda: ["PEPEUSDC", "SHIBUSDC", "FLOKIUSDC"])  # Symboles micro-prix à surveiller
 
     def __post_init__(self):
         # Plus besoin de __post_init__ car les listes sont gérées par default_factory
