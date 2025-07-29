@@ -101,15 +101,8 @@ class RSIScalpingBot:
         try:
             self.logger.info("🔧 Initialisation des modules...")
             
-            # Data Fetcher
-            self.data_fetcher = DataFetcher(
-                api_key=self.api_config.BINANCE_API_KEY,
-                secret_key=self.api_config.BINANCE_SECRET_KEY,
-                testnet=self.api_config.BINANCE_TESTNET
-            )
-            
-            # Test de connexion Binance
-            await self.data_fetcher.test_connection()
+            # Data Fetcher avec nouvelle méthode
+            await self.initialize_data_fetcher()
             
             # Indicateurs techniques
             self.indicators = TechnicalIndicators(self.config)
@@ -668,53 +661,69 @@ class RSIScalpingBot:
             return False
     
     async def monitor_positions(self):
-        """Surveillance des positions ouvertes"""
+        """Surveillance des positions ouvertes avec gestion d'erreurs robuste"""
         try:
+            if not self.open_positions:
+                return  # Pas de positions à surveiller
+                
             positions_to_close = []
             
             for pair, position in self.open_positions.items():
-                # Récupération du prix actuel
-                ticker = await self.data_fetcher.get_ticker(pair)
-                if not ticker:
+                try:
+                    # Récupération du prix actuel avec gestion d'erreur
+                    ticker = await self.data_fetcher.get_ticker(pair)
+                    if not ticker or 'price' not in ticker:
+                        self.logger.warning(f"⚠️ Ticker invalide pour {pair}, skip monitoring")
+                        continue
+                    
+                    current_price = float(ticker['price'])
+                    entry_price = position['entry_price']
+                    pnl_percent = (current_price - entry_price) / entry_price * 100
+                    
+                    # Vérification timeout adaptatif
+                    time_in_position = (datetime.now() - position['entry_time']).total_seconds() / 60
+                    should_close = False
+                    close_reason = ""
+                    
+                    # Timeout si stagne dans [-0.1%, +0.2%]
+                    if time_in_position > 3 and -0.1 <= pnl_percent <= 0.2:
+                        should_close = True
+                        close_reason = "Timeout stagnation"
+                    
+                    # Sortie anticipée si momentum faible
+                    elif time_in_position > 3:
+                        try:
+                            # Récupération données pour vérifier momentum
+                            klines = await self.data_fetcher.get_klines(pair, "1m", limit=20)
+                            if klines:
+                                df = pd.DataFrame(klines, columns=[
+                                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                                    'close_time', 'quote_volume', 'trades', 'taker_buy_volume',
+                                    'taker_buy_quote_volume', 'ignore'
+                                ])
+                                df['close'] = pd.to_numeric(df['close'])
+                                
+                                # Vérification RSI et MACD avec gestion d'erreur
+                                try:
+                                    rsi = self.indicators.calculate_rsi(df['close'], period=14)
+                                    macd_data = self.indicators.calculate_macd(df['close'])
+                                    
+                                    if (rsi.iloc[-1] < 35 or 
+                                        macd_data['macd'].iloc[-1] < macd_data['signal'].iloc[-1]):
+                                        should_close = True
+                                        close_reason = "Momentum faible"
+                                except Exception as e:
+                                    self.logger.warning(f"⚠️ Erreur calcul indicateurs {pair}: {e}")
+                        except Exception as e:
+                            self.logger.warning(f"⚠️ Erreur récupération données {pair}: {e}")
+                    
+                    if should_close:
+                        positions_to_close.append((pair, close_reason))
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ Erreur surveillance position {pair}: {e}")
+                    # Continue avec les autres positions au lieu de crasher
                     continue
-                
-                current_price = float(ticker['price'])
-                entry_price = position['entry_price']
-                pnl_percent = (current_price - entry_price) / entry_price * 100
-                
-                # Vérification timeout adaptatif
-                time_in_position = (datetime.now() - position['entry_time']).total_seconds() / 60
-                should_close = False
-                close_reason = ""
-                
-                # Timeout si stagne dans [-0.1%, +0.2%]
-                if time_in_position > 3 and -0.1 <= pnl_percent <= 0.2:
-                    should_close = True
-                    close_reason = "Timeout stagnation"
-                
-                # Sortie anticipée si momentum faible
-                elif time_in_position > 3:
-                    # Récupération données pour vérifier momentum
-                    klines = await self.data_fetcher.get_klines(pair, "1m", limit=20)
-                    if klines:
-                        df = pd.DataFrame(klines, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_volume',
-                            'taker_buy_quote_volume', 'ignore'
-                        ])
-                        df['close'] = pd.to_numeric(df['close'])
-                        
-                        # Vérification RSI et MACD
-                        rsi = self.indicators.calculate_rsi(df['close'], period=14)
-                        macd_data = self.indicators.calculate_macd(df['close'])
-                        
-                        if (rsi.iloc[-1] < 35 or 
-                            macd_data['macd'].iloc[-1] < macd_data['signal'].iloc[-1]):
-                            should_close = True
-                            close_reason = "Momentum faible"
-                
-                if should_close:
-                    positions_to_close.append((pair, close_reason))
             
             # Fermeture des positions identifiées
             for pair, reason in positions_to_close:
@@ -722,6 +731,82 @@ class RSIScalpingBot:
                 
         except Exception as e:
             self.logger.error(f"❌ Erreur surveillance positions: {e}")
+    
+    async def sync_positions_with_executor(self):
+        """Synchronise les positions locales avec trade_executor"""
+        try:
+            if not self.trade_executor:
+                return
+                
+            # Récupérer les positions actives du trade_executor
+            executor_positions = self.trade_executor.active_trades
+            
+            # Supprimer les positions locales qui ne sont plus dans trade_executor
+            local_pairs = list(self.open_positions.keys())
+            for pair in local_pairs:
+                # Chercher si cette paire existe encore dans trade_executor
+                pair_exists = any(trade.pair == pair for trade in executor_positions.values())
+                
+                if not pair_exists:
+                    self.logger.info(f"🔄 Synchronisation: Position {pair} fermée par trade_executor")
+                    del self.open_positions[pair]
+            
+            # Ajouter les nouvelles positions du trade_executor qui ne sont pas locales
+            for trade in executor_positions.values():
+                if trade.pair not in self.open_positions:
+                    self.open_positions[trade.pair] = {
+                        'entry_price': trade.entry_price,
+                        'quantity': trade.quantity,
+                        'entry_time': trade.timestamp,
+                        'trade_id': trade.trade_id
+                    }
+                    self.logger.info(f"🔄 Synchronisation: Nouvelle position {trade.pair} ajoutée")
+                    
+        except Exception as e:
+            self.logger.error(f"❌ Erreur synchronisation positions: {e}")
+    
+    async def ensure_connection(self):
+        """S'assure que les connexions sont actives"""
+        try:
+            if self.data_fetcher:
+                # Test de connexion simple
+                await self.data_fetcher.test_connection()
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ Reconnexion nécessaire: {e}")
+            # Tentative de reconnexion
+            try:
+                if self.data_fetcher and hasattr(self.data_fetcher, 'close'):
+                    await self.data_fetcher.close()
+                    
+                # Réinitialiser la connexion
+                await self.initialize_data_fetcher()
+                self.logger.info("✅ Reconnexion réussie")
+                
+            except Exception as e2:
+                self.logger.error(f"❌ Échec reconnexion: {e2}")
+                # Note: Ne pas faire crash le bot pour un problème de connexion
+    
+    async def initialize_data_fetcher(self):
+        """Initialise ou réinitialise le data fetcher"""
+        try:
+            # Configuration API
+            api_config = APIConfig()
+            
+            # Initialisation DataFetcher
+            self.data_fetcher = DataFetcher(
+                api_key=api_config.BINANCE_API_KEY,
+                secret_key=api_config.BINANCE_SECRET_KEY,
+                testnet=api_config.BINANCE_TESTNET
+            )
+            
+            # Test de connexion
+            await self.data_fetcher.test_connection()
+            self.logger.info("✅ DataFetcher initialisé et testé")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur initialisation DataFetcher: {e}")
+            raise
     
     async def close_position(self, pair: str, reason: str = "Manuel"):
         """Ferme une position"""
@@ -795,13 +880,36 @@ class RSIScalpingBot:
         
         while self.is_running:
             try:
+                # Vérification et reconnexion si nécessaire
+                try:
+                    await self.ensure_connection()
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Problème connexion: {e}")
+                    # Continue le cycle même en cas de problème de connexion
+                
                 # Vérification des conditions de trading
                 if not await self.check_trading_conditions():
                     await asyncio.sleep(40)  # Scan toutes les 40 secondes
                     continue
                 
-                # Surveillance des positions ouvertes
-                await self.monitor_positions()
+                # Surveillance des positions ouvertes - Déléguer à trade_executor
+                try:
+                    # Utiliser le monitoring robuste de trade_executor
+                    if self.trade_executor:
+                        await self.trade_executor.monitor_positions()
+                        
+                        # Synchroniser avec les positions locales
+                        await self.sync_positions_with_executor()
+                        
+                except Exception as e:
+                    self.logger.error(f"❌ Erreur surveillance positions: {e}")
+                    # Continue le cycle au lieu de crasher
+                    if self.firebase_logger:
+                        await self.firebase_logger.log_error({
+                            'component': 'monitor_positions',
+                            'message': str(e),
+                            'level': 'ERROR'
+                        })
                 
                 # Scan des nouvelles opportunités
                 if len(self.open_positions) < self.config.MAX_OPEN_POSITIONS:
