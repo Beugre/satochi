@@ -552,22 +552,15 @@ class RSIScalpingBot:
                 analysis_data=analysis_data
             )
             
-            # Adapter le résultat pour compatibilité
-            order_result = {
-                'success': trade_result is not None,
-                'trade': trade_result
-            }
-            
-            if order_result['success']:
-                trade = order_result['trade']
-                # Enregistrement de la position
+            if trade_result is not None:
+                # Enregistrement de la position UNIQUEMENT (pas de re-logging)
                 self.open_positions[pair] = {
-                    'entry_price': trade.entry_price,
-                    'quantity': trade.quantity,
-                    'take_profit': trade.take_profit_price,
-                    'stop_loss': trade.stop_loss_price,
-                    'entry_time': trade.entry_time,
-                    'position_value': trade.capital_engaged,
+                    'entry_price': trade_result.entry_price,
+                    'quantity': trade_result.quantity,
+                    'take_profit': trade_result.take_profit_price,
+                    'stop_loss': trade_result.stop_loss_price,
+                    'entry_time': trade_result.entry_time,
+                    'position_value': trade_result.capital_engaged,
                     'analysis_data': analysis_data
                 }
                 
@@ -576,48 +569,8 @@ class RSIScalpingBot:
                 self.trades_today += 1
                 self.trades_this_hour += 1
                 
-                # Log trade exécuté dans Firebase
-                trade_id = f"{pair}_{int(now.timestamp())}"
-                if self.firebase_logger:
-                    await self.firebase_logger.log_trade_execution(
-                        pair, "BUY", current_price, quantity, trade_id, True
-                    )
-                
-                message = f"🟢 BUY {pair}: {quantity:.6f} @ {current_price:.4f} USDC"
-                self.logger.info(message)
-                
-                # Log console mirror
-                if self.firebase_logger:
-                    await self.firebase_logger.log_console_mirror('INFO', message, 'trade_executor')
-                self.trades_today += 1
-                self.trades_this_hour += 1
-                
-                # Notification
-                if self.telegram_notifier:
-                    await self.telegram_notifier.send_trade_open_notification(
-                        trade=type('Trade', (), {
-                            'pair': pair,
-                            'entry_price': current_price,
-                            'size': quantity,
-                            'stop_loss': stop_loss_price,
-                            'take_profit': take_profit_price,
-                            'timestamp': now
-                        })(),
-                        capital_engaged=position_value
-                    )
-                
-                # Log Firebase
-                if self.firebase_logger:
-                    await self.firebase_logger.log_trade_open(
-                        pair=pair,
-                        entry_price=current_price,
-                        quantity=quantity,
-                        take_profit=take_profit_price,
-                        stop_loss=stop_loss_price,
-                        analysis_data=analysis_data
-                    )
-                
-                self.logger.info(f"🟢 BUY {pair}: {quantity:.6f} @ {current_price:.4f} USDC")
+                # Log simple dans main.py
+                self.logger.info(f"✅ Trade {pair} enregistré dans les positions ouvertes")
                 return True
             
             return False
@@ -690,7 +643,7 @@ class RSIScalpingBot:
             
             position = self.open_positions[pair]
             
-            # Exécution de l'ordre de vente
+            # Exécution de l'ordre de vente via trade_executor
             result = await self.trade_executor.execute_sell_order(pair, position['quantity'])
             
             if result['success']:
@@ -712,36 +665,11 @@ class RSIScalpingBot:
                 else:
                     self.consecutive_losses = 0
                 
-                # Notification
-                if self.telegram_notifier:
-                    await self.telegram_notifier.send_trade_close_notification(
-                        trade=type('Trade', (), {
-                            'pair': pair,
-                            'exit_price': exit_price,
-                            'exit_reason': reason,
-                            'exit_timestamp': datetime.now(),
-                            'duration': str(datetime.now() - position['entry_time'])
-                        })(),
-                        pnl_amount=pnl_amount,
-                        pnl_percent=pnl_percent,
-                        daily_pnl=self.daily_pnl,
-                        total_capital=await self.get_current_capital()
-                    )
-                
-                # Log Firebase
-                if self.firebase_logger:
-                    await self.firebase_logger.log_trade_close(
-                        pair=pair,
-                        exit_price=exit_price,
-                        pnl_amount=pnl_amount,
-                        pnl_percent=pnl_percent,
-                        exit_reason=reason
-                    )
-                
                 # Suppression de la position
                 del self.open_positions[pair]
                 
-                self.logger.info(f"🔴 SELL {pair}: {position['quantity']:.6f} @ {exit_price:.4f} USDC | P&L: {pnl_amount:+.2f} USDC ({pnl_percent:+.2f}%) | Raison: {reason}")
+                # Log simple dans main.py
+                self.logger.info(f"✅ Position {pair} fermée | P&L: {pnl_amount:+.2f} USDC ({pnl_percent:+.2f}%) | Raison: {reason}")
                 
         except Exception as e:
             self.logger.error(f"❌ Erreur fermeture position {pair}: {e}")
@@ -796,8 +724,19 @@ class RSIScalpingBot:
                 self.logger.error(traceback.format_exc())
                 
                 # Notification d'erreur
-                if self.telegram_notifier:
-                    await self.telegram_notifier.send_error_notification(str(e), "Boucle principale")
+                try:
+                    if self.telegram_notifier:
+                        await self.telegram_notifier.send_error_notification(str(e), "Boucle principale")
+                except:
+                    self.logger.error("❌ Impossible d'envoyer la notification d'erreur")
+                
+                # Réinitialisation des connexions en cas d'erreur réseau
+                try:
+                    if "timeout" in str(e).lower() or "connection" in str(e).lower():
+                        self.logger.warning("🔄 Reconnexion après erreur réseau...")
+                        await self.data_fetcher.test_connection()
+                except:
+                    self.logger.error("❌ Échec de la reconnexion")
                 
                 # Attendre avant de continuer
                 await asyncio.sleep(60)
