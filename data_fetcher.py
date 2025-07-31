@@ -79,8 +79,6 @@ class DataFetcher:
             self.logger.error(f"❌ Test connexion Binance échoué: {e}")
             raise
     
-<<<<<<< HEAD
-=======
     async def get_symbol_info(self, symbol: str) -> Dict:
         """Récupère les informations de trading d'un symbole"""
         cache_key = f"symbol_info_{symbol}"
@@ -227,7 +225,6 @@ class DataFetcher:
             self.logger.warning(f"⚠️ Erreur arrondi prix: {e}, utilisation prix original")
             return price
     
->>>>>>> feature/clean-config
     def _is_cache_valid(self, key: str, ttl_seconds: int) -> bool:
         """Vérifie si le cache est encore valide"""
         if key not in self.cache:
@@ -566,10 +563,6 @@ class DataFetcher:
             raise
     
     async def place_order(self, symbol: str, side: str, order_type: str, quantity: float, price: Optional[float] = None, **kwargs) -> Dict:
-<<<<<<< HEAD
-        """Place un ordre sur Binance"""
-        try:
-=======
         """Place un ordre sur Binance avec gestion de la précision"""
         try:
             # Version simplifiée : récupérer directement la précision depuis Binance
@@ -641,52 +634,8 @@ class DataFetcher:
             
             # Arrondir le prix si fourni
             if price is not None:
-                # Appliquer la même logique de précision pour le prix
-                if symbol_info:
-                    # Récupérer les filtres PRICE_FILTER
-                    price_filter = None
-                    for filter_info in symbol_info['filters']:
-                        if filter_info['filterType'] == 'PRICE_FILTER':
-                            price_filter = filter_info
-                            break
-                    
-                    if price_filter:
-                        tick_size = float(price_filter['tickSize'])
-                        
-                        if tick_size > 0:
-                            # Calculer les décimales depuis tick_size
-                            if tick_size == 1:
-                                decimals = 0
-                            elif tick_size == 0.1:
-                                decimals = 1
-                            elif tick_size == 0.01:
-                                decimals = 2
-                            elif tick_size == 0.001:
-                                decimals = 3
-                            elif tick_size == 0.0001:
-                                decimals = 4
-                            elif tick_size == 0.00001:
-                                decimals = 5
-                            elif tick_size == 0.000001:
-                                decimals = 6
-                            else:
-                                # Méthode générale
-                                tick_str = f"{tick_size:.10f}".rstrip('0')
-                                decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
-                            
-                            # Arrondir le prix à la tick_size
-                            price = round(price / tick_size) * tick_size
-                            price = round(price, decimals)
-                            
-                            self.logger.info(f"📏 Prix arrondi {symbol}: {price} (tickSize: {tick_size}, decimals: {decimals})")
-                        else:
-                            price = round(price, 8)
-                    else:
-                        price = round(price, 8)
-                else:
-                    price = round(price, 8)
+                price = round(price, 8)  # Prix généralement 8 décimales max
             
->>>>>>> feature/clean-config
             if self.binance_client:
                 if order_type.upper() == 'MARKET':
                     if side.upper() == 'BUY':
@@ -756,145 +705,6 @@ class DataFetcher:
             self.logger.error(f"❌ Erreur placement ordre {symbol}: {e}")
             raise
     
-<<<<<<< HEAD
-    async def place_oco_order(self, symbol: str, side: str, quantity: float, price: float, stopPrice: float, stopLimitPrice: float) -> Dict:
-        """Place un ordre OCO (One-Cancels-Other) sur Binance"""
-        try:
-            if self.binance_client:
-                # Formatage des quantités et prix
-                quantity = await self._format_quantity_for_symbol(symbol, quantity)
-                price = await self._format_price_for_symbol(symbol, price)
-                stopPrice = await self._format_price_for_symbol(symbol, stopPrice)
-                stopLimitPrice = await self._format_price_for_symbol(symbol, stopLimitPrice)
-                
-                order = self.binance_client.create_oco_order(
-                    symbol=symbol,
-                    side=side,
-                    quantity=quantity,
-                    price=price,
-                    stopPrice=stopPrice,
-                    stopLimitPrice=stopLimitPrice,
-                    stopLimitTimeInForce='GTC'
-                )
-                return order
-                
-            else:
-                raise Exception("OCO orders nécessitent le client Binance")
-                
-        except Exception as e:
-            self.logger.error(f"❌ Erreur placement ordre OCO {symbol}: {e}")
-            raise
-    
-    async def _format_quantity_for_symbol(self, symbol: str, quantity: float) -> float:
-        """Formate la quantité selon les règles du symbole"""
-        try:
-            symbol_info = await self.get_symbol_info(symbol)
-            if not symbol_info:
-                return round(quantity, 6)
-            
-            # Récupération du filtre LOT_SIZE
-            step_size = None
-            for filter_info in symbol_info.get('filters', []):
-                if filter_info['filterType'] == 'LOT_SIZE':
-                    step_size = float(filter_info['stepSize'])
-                    break
-            
-            if step_size is None:
-                precision = symbol_info.get('baseAssetPrecision', 6)
-                return round(quantity, precision)
-            
-            # Calcul précision et formatage
-            import math
-            precision = max(0, int(-math.log10(step_size)))
-            formatted_quantity = round(quantity / step_size) * step_size
-            return round(formatted_quantity, precision)
-            
-        except Exception as e:
-            self.logger.error(f"❌ Erreur formatage quantité {symbol}: {e}")
-            return round(quantity, 6)
-    
-    async def _format_price_for_symbol(self, symbol: str, price: float) -> float:
-        """Formate le prix selon les règles du symbole"""
-        try:
-            symbol_info = await self.get_symbol_info(symbol)
-            if not symbol_info:
-                return round(price, 8)
-            
-            # Récupération du filtre PRICE_FILTER
-            tick_size = None
-            for filter_info in symbol_info.get('filters', []):
-                if filter_info['filterType'] == 'PRICE_FILTER':
-                    tick_size = float(filter_info['tickSize'])
-                    break
-            
-            if tick_size is None:
-                precision = symbol_info.get('quotePrecision', 8)
-                return round(price, precision)
-            
-            # Calcul précision et formatage
-            import math
-            precision = max(0, int(-math.log10(tick_size)))
-            formatted_price = round(price / tick_size) * tick_size
-            return round(formatted_price, precision)
-            
-        except Exception as e:
-            self.logger.error(f"❌ Erreur formatage prix {symbol}: {e}")
-            return round(price, 8)
-    
-    async def get_orders(self, symbol: str, start_time: int = None) -> List[Dict]:
-        """Récupère tous les ordres pour un symbole"""
-        try:
-            if self.binance_client:
-                params = {
-                    'symbol': symbol,
-                    'limit': 50
-                }
-                if start_time:
-                    params['startTime'] = start_time
-                    
-                orders = self.binance_client.get_all_orders(**params)
-                return orders
-            
-            elif self.ccxt_client:
-                # Conversion au format CCXT
-                ccxt_symbol = symbol.replace('USDC', '/USDC')
-                orders = await self.ccxt_client.fetch_orders(ccxt_symbol)
-                
-                # Conversion au format Binance pour compatibilité
-                binance_orders = []
-                for order in orders:
-                    binance_orders.append({
-                        'symbol': symbol,
-                        'orderId': order['id'],
-                        'orderListId': -1,
-                        'clientOrderId': order.get('clientOrderId', ''),
-                        'price': str(order.get('price', 0)),
-                        'origQty': str(order.get('amount', 0)),
-                        'executedQty': str(order.get('filled', 0)),
-                        'cummulativeQuoteQty': str(order.get('cost', 0)),
-                        'status': order.get('status', 'UNKNOWN').upper(),
-                        'timeInForce': 'GTC',
-                        'type': order.get('type', 'LIMIT').upper(),
-                        'side': order.get('side', 'BUY').upper(),
-                        'stopPrice': str(order.get('stopPrice', 0)),
-                        'icebergQty': '0',
-                        'time': int(order.get('timestamp', 0)),
-                        'updateTime': int(order.get('lastTradeTimestamp', 0)),
-                        'isWorking': order.get('status') in ['open', 'pending']
-                    })
-                
-                return binance_orders
-            
-            else:
-                self.logger.error("❌ Aucun client disponible pour récupérer les ordres")
-                return []
-                
-        except Exception as e:
-            self.logger.error(f"❌ Erreur récupération ordres {symbol}: {e}")
-            return []
-    
-=======
->>>>>>> feature/clean-config
     async def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """Annule un ordre"""
         try:

@@ -7,10 +7,6 @@ Gestionnaire d'exécution des trades avec gestion des risques
 import asyncio
 import logging
 import time
-<<<<<<< HEAD
-import pandas as pd
-=======
->>>>>>> feature/clean-config
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
@@ -39,10 +35,6 @@ class ExitReason(Enum):
     STOP_LOSS = "STOP_LOSS"
     TIMEOUT = "TIMEOUT"
     EARLY_EXIT = "EARLY_EXIT"
-<<<<<<< HEAD
-    INTELLIGENT_EXIT = "INTELLIGENT_EXIT"  # Nouvelle sortie intelligente basée RSI + temps
-=======
->>>>>>> feature/clean-config
     MANUAL = "MANUAL"
     ERROR = "ERROR"
 
@@ -121,18 +113,6 @@ class TradeExecutor:
         self.telegram_notifier = telegram_notifier
         self.logger = logging.getLogger(__name__)
         
-<<<<<<< HEAD
-        # Initialisation des indicateurs techniques pour stratégie RSI
-        try:
-            from indicators import TechnicalIndicators
-            self.indicators = TechnicalIndicators(config=config)
-            self.logger.info("📊 Indicateurs techniques RSI initialisés")
-        except ImportError:
-            self.indicators = None
-            self.logger.warning("⚠️ Module indicators non trouvé - Stratégie RSI désactivée")
-        
-=======
->>>>>>> feature/clean-config
         # Gestion des trades
         self.active_trades: Dict[str, Trade] = {}
         self.trade_history: List[Trade] = []
@@ -149,284 +129,6 @@ class TradeExecutor:
         self.is_paused = False
         self.pause_until = None
         
-<<<<<<< HEAD
-        self.logger.info("💼 Trade Executor initialisé")
-    
-    async def _format_quantity(self, symbol: str, quantity: float) -> float:
-        """Formate la quantité selon les règles de précision de Binance"""
-        try:
-            symbol_info = await self.data_fetcher.get_symbol_info(symbol)
-            if not symbol_info:
-                self.logger.warning(f"⚠️ Informations symbole non trouvées pour {symbol}, utilisation précision par défaut")
-                return round(quantity, 6)  # Précision par défaut
-            
-            # Récupération du filtre LOT_SIZE pour la précision de quantité
-            step_size = None
-            for filter_info in symbol_info.get('filters', []):
-                if filter_info['filterType'] == 'LOT_SIZE':
-                    step_size = float(filter_info['stepSize'])
-                    break
-            
-            if step_size is None:
-                # Fallback avec baseAssetPrecision si disponible
-                precision = symbol_info.get('baseAssetPrecision', 6)
-                return round(quantity, precision)
-            
-            # Calcul de la précision basée sur stepSize
-            # stepSize = 0.001 → 3 décimales, stepSize = 0.01 → 2 décimales, etc.
-            import math
-            precision = max(0, int(-math.log10(step_size)))
-            
-            # Arrondi selon la règle stepSize (quantité doit être un multiple de stepSize)
-            formatted_quantity = round(quantity / step_size) * step_size
-            
-            # Application de la précision pour éviter les erreurs de virgule flottante
-            formatted_quantity = round(formatted_quantity, precision)
-            
-            # 🔧 PROTECTION CONTRE NOTATION SCIENTIFIQUE et VALIDATION FORMAT BINANCE
-            # Conversion en string pour vérifier le format
-            quantity_str = f"{formatted_quantity:.{precision}f}"
-            
-            # Vérification que la quantité respecte le format Binance (pas de notation scientifique)
-            if 'e' in quantity_str.lower() or 'E' in quantity_str:
-                # Si notation scientifique détectée, utiliser format décimal forcé
-                formatted_quantity = float(f"{formatted_quantity:.{min(precision, 20)}f}")
-                quantity_str = f"{formatted_quantity:.{min(precision, 20)}f}"
-                self.logger.debug(f"� {symbol}: notation scientifique évitée - quantité formatée: {quantity_str}")
-            
-            # Validation finale que le string respecte le pattern Binance
-            import re
-            if not re.match(r'^([0-9]{1,20})(\.[0-9]{1,20})?$', quantity_str):
-                # Format invalide, utilisation quantité arrondie simple
-                safe_precision = min(8, precision)
-                formatted_quantity = round(quantity, safe_precision)
-                self.logger.warning(f"⚠️ {symbol}: format quantité invalide, utilisation précision sécurisée: {safe_precision}")
-            
-            self.logger.debug(f"�📏 {symbol}: quantité {quantity:.8f} → {formatted_quantity:.{precision}f} (stepSize: {step_size}, precision: {precision})")
-            
-            return formatted_quantity
-            
-        except Exception as e:
-            self.logger.error(f"❌ Erreur formatage quantité {symbol}: {e}")
-            return round(quantity, 6)  # Précision sécurisée par défaut
-    
-    async def _format_price(self, symbol: str, price: float) -> float:
-        """Formate le prix selon les règles de précision de Binance"""
-        try:
-            symbol_info = await self.data_fetcher.get_symbol_info(symbol)
-            if not symbol_info:
-                self.logger.warning(f"⚠️ Informations symbole non trouvées pour {symbol}, utilisation précision prix par défaut")
-                return round(price, 8)  # Précision par défaut
-            
-            # Récupération du filtre PRICE_FILTER pour la précision de prix
-            tick_size = None
-            for filter_info in symbol_info.get('filters', []):
-                if filter_info['filterType'] == 'PRICE_FILTER':
-                    tick_size = float(filter_info['tickSize'])
-                    break
-            
-            if tick_size is None:
-                # Fallback avec quotePrecision si disponible
-                precision = symbol_info.get('quotePrecision', 8)
-                return round(price, precision)
-            
-            # Calcul de la précision basée sur tickSize
-            import math
-            precision = max(0, int(-math.log10(tick_size)))
-            
-            # Arrondi selon la règle tickSize (prix doit être un multiple de tickSize)
-            formatted_price = round(price / tick_size) * tick_size
-            
-            # Application de la précision pour éviter les erreurs de virgule flottante
-            formatted_price = round(formatted_price, precision)
-            
-            # 🔧 PROTECTION CONTRE NOTATION SCIENTIFIQUE et VALIDATION FORMAT BINANCE
-            # Conversion en string pour vérifier le format
-            price_str = f"{formatted_price:.{precision}f}"
-            
-            # Vérification que le prix respecte le format Binance (pas de notation scientifique)
-            if 'e' in price_str.lower() or 'E' in price_str:
-                # Si notation scientifique détectée, utiliser format décimal forcé
-                formatted_price = float(f"{formatted_price:.{min(precision, 20)}f}")
-                price_str = f"{formatted_price:.{min(precision, 20)}f}"
-                self.logger.debug(f"🔧 {symbol}: notation scientifique évitée - prix formaté: {price_str}")
-            
-            # Validation finale que le string respecte le pattern Binance
-            import re
-            if not re.match(r'^([0-9]{1,20})(\.[0-9]{1,20})?$', price_str):
-                # Format invalide, utilisation prix arrondi simple
-                safe_precision = min(8, precision)
-                formatted_price = round(price, safe_precision)
-                self.logger.warning(f"⚠️ {symbol}: format prix invalide, utilisation précision sécurisée: {safe_precision}")
-            
-            self.logger.debug(f"💰 {symbol}: prix {price:.8f} → {formatted_price:.{precision}f} (tickSize: {tick_size}, precision: {precision})")
-            
-            return formatted_price
-            
-        except Exception as e:
-            self.logger.error(f"❌ Erreur formatage prix {symbol}: {e}")
-            return round(price, 8)  # Précision sécurisée par défaut
-    
-    async def get_rsi_distribution_strategy(self, symbol: str) -> Tuple[float, float, str]:
-        """
-        Calcule le RSI et retourne la stratégie de répartition optimale
-        Returns: (sl_percentage, tp_percentage, strategy_name)
-        """
-        try:
-            # Vérifier que les indicateurs sont disponibles
-            if not self.indicators:
-                self.logger.warning(f"⚠️ Indicateurs non disponibles pour {symbol} - Stratégie équilibrée par défaut")
-                return 50.0, 50.0, "Neutre (indicateurs non disponibles)"
-            
-            # Récupération des données historiques (100 bougies pour RSI fiable)
-            klines = await self.data_fetcher.get_klines(symbol, "1h", 100)
-            
-            if not klines or len(klines) < 50:
-                self.logger.warning(f"⚠️ Données insuffisantes pour RSI {symbol} - Stratégie équilibrée par défaut")
-                return 50.0, 50.0, "Neutre (données insuffisantes)"
-            
-            # Extraction des prix de clôture
-            closes = [float(kline[4]) for kline in klines]  # Index 4 = close price
-            closes_series = pd.Series(closes)  # Convertir en Series pandas
-            
-            # Calcul du RSI
-            rsi_values = self.indicators.calculate_rsi(closes_series, period=14)
-            current_rsi = float(rsi_values.iloc[-1])  # Dernier RSI
-            
-            # Stratégie de répartition basée sur RSI
-            if current_rsi > 70:
-                # Marché SURACHETÉ → Privilégier les profits
-                sl_pct, tp_pct = 30.0, 70.0
-                strategy = f"Suracheté (RSI: {current_rsi:.1f})"
-                self.logger.info(f"📈 {symbol} - Marché SURACHETÉ: RSI {current_rsi:.1f} → Privilégier profits (30% SL / 70% TP)")
-            elif current_rsi < 30:
-                # Marché SURVENDU → Protéger le capital
-                sl_pct, tp_pct = 80.0, 20.0
-                strategy = f"Survendu (RSI: {current_rsi:.1f})"
-                self.logger.info(f"📉 {symbol} - Marché SURVENDU: RSI {current_rsi:.1f} → Protéger capital (80% SL / 20% TP)")
-            else:
-                # Marché NEUTRE → Approche équilibrée
-                sl_pct, tp_pct = 50.0, 50.0
-                strategy = f"Neutre (RSI: {current_rsi:.1f})"
-                self.logger.info(f"⚖️ {symbol} - Marché NEUTRE: RSI {current_rsi:.1f} → Approche équilibrée (50% SL / 50% TP)")
-            
-            return sl_pct, tp_pct, strategy
-            
-        except Exception as e:
-            self.logger.warning(f"⚠️ Erreur calcul RSI pour {symbol}: {e} - Stratégie équilibrée par défaut")
-            return 50.0, 50.0, "Neutre (erreur calcul RSI)"
-    
-    async def _get_current_rsi(self, symbol: str) -> Optional[float]:
-        """
-        Récupère le RSI actuel pour surveillance en temps réel
-        Returns: RSI actuel ou None si erreur
-        """
-        try:
-            if not self.indicators:
-                return None
-            
-            # Récupération des données récentes (50 bougies suffisent pour RSI)
-            klines = await self.data_fetcher.get_klines(symbol, "1h", 50)
-            
-            if not klines or len(klines) < 20:
-                return None
-            
-            # Extraction des prix de clôture
-            closes = [float(kline[4]) for kline in klines]  # Index 4 = close price
-            closes_series = pd.Series(closes)
-            
-            # Calcul du RSI
-            rsi_values = self.indicators.calculate_rsi(closes_series, period=14)
-            current_rsi = float(rsi_values.iloc[-1])
-            
-            return current_rsi
-            
-        except Exception as e:
-            self.logger.debug(f"⚠️ Erreur calcul RSI temps réel {symbol}: {e}")
-            return None
-    
-    async def _check_intelligent_exit_conditions(self, trade: Trade, current_price: float, current_pnl_percent: float) -> Optional[str]:
-        """
-        🧠 GESTION INTELLIGENTE DES POSITIONS - Analyse RSI + Temps pour sortie optimale
-        Returns: Raison de sortie ou None si position doit continuer
-        """
-        try:
-            # Vérification si la sortie intelligente est activée
-            if not self.config.INTELLIGENT_EXIT_ENABLED:
-                return None
-            
-            # Calcul du temps écoulé en minutes
-            duration_minutes = (datetime.now() - trade.timestamp).total_seconds() / 60
-            
-            # Récupération du RSI actuel
-            current_rsi = await self._get_current_rsi(trade.pair)
-            
-            # 🔴 PHASE 1: 0-X minutes - Protection capitale prioritaire
-            if duration_minutes <= self.config.INTELLIGENT_EXIT_PHASE1_DURATION:
-                # Protection contre chute rapide
-                if current_pnl_percent < self.config.INTELLIGENT_EXIT_PROTECTION_LOSS:
-                    self.logger.info(f"🚨 {trade.pair} - Sortie anticipée (0-{self.config.INTELLIGENT_EXIT_PHASE1_DURATION}min): P&L {current_pnl_percent:.2f}% < {self.config.INTELLIGENT_EXIT_PROTECTION_LOSS}%")
-                    return f"Perte rapide ({self.config.INTELLIGENT_EXIT_PROTECTION_LOSS}%)"
-                
-                # RSI très défavorable = sortie immédiate
-                if current_rsi is not None:
-                    if (trade.rsi_value and trade.rsi_value < 50 and current_rsi > self.config.INTELLIGENT_EXIT_RSI_EXTREME_HIGH) or \
-                       (trade.rsi_value and trade.rsi_value > 50 and current_rsi < self.config.INTELLIGENT_EXIT_RSI_EXTREME_LOW):
-                        self.logger.info(f"📊 {trade.pair} - Sortie RSI critique (0-{self.config.INTELLIGENT_EXIT_PHASE1_DURATION}min): RSI {trade.rsi_value:.1f}→{current_rsi:.1f}")
-                        return f"RSI critique ({current_rsi:.1f})"
-            
-            # 🟡 PHASE 2: X-Y minutes - Seuil de rentabilité
-            elif self.config.INTELLIGENT_EXIT_PHASE1_DURATION < duration_minutes <= self.config.INTELLIGENT_EXIT_PHASE2_DURATION:
-                # Seuil acceptable atteint → Trailing stop agressif
-                if current_pnl_percent >= self.config.INTELLIGENT_EXIT_PROFIT_THRESHOLD:
-                    # Laisser courir avec trailing stop (géré par Binance)
-                    self.logger.info(f"✅ {trade.pair} - Seuil +{self.config.INTELLIGENT_EXIT_PROFIT_THRESHOLD}% atteint ({current_pnl_percent:.2f}%) - Trailing actif")
-                    return None  # Continue avec trailing stop
-                
-                # Zone neutre + RSI défavorable = sortie break-even
-                if 0 <= current_pnl_percent < self.config.INTELLIGENT_EXIT_PROFIT_THRESHOLD and current_rsi is not None:
-                    # RSI devient défavorable par rapport à l'entrée
-                    rsi_deterioration = False
-                    if trade.rsi_value:
-                        if trade.rsi_value < 50 and current_rsi > self.config.INTELLIGENT_EXIT_RSI_HIGH:  # Entrée survendu → devient suracheté
-                            rsi_deterioration = True
-                        elif trade.rsi_value > 50 and current_rsi < self.config.INTELLIGENT_EXIT_RSI_LOW:  # Entrée suracheté → devient survendu
-                            rsi_deterioration = True
-                    
-                    if rsi_deterioration:
-                        self.logger.info(f"📊 {trade.pair} - Sortie RSI défavorable ({self.config.INTELLIGENT_EXIT_PHASE1_DURATION}-{self.config.INTELLIGENT_EXIT_PHASE2_DURATION}min): RSI {trade.rsi_value:.1f}→{current_rsi:.1f}, P&L {current_pnl_percent:.2f}%")
-                        return f"RSI défavorable ({current_rsi:.1f})"
-            
-            # 🟠 PHASE 3: Y-Z minutes - Mode conservateur
-            elif self.config.INTELLIGENT_EXIT_PHASE2_DURATION < duration_minutes <= self.config.INTELLIGENT_EXIT_PHASE3_DURATION:
-                # Petit profit = sortie sécurisée
-                if current_pnl_percent >= self.config.INTELLIGENT_EXIT_SMALL_PROFIT:
-                    self.logger.info(f"💰 {trade.pair} - Sortie petit profit ({self.config.INTELLIGENT_EXIT_PHASE2_DURATION}-{self.config.INTELLIGENT_EXIT_PHASE3_DURATION}min): P&L {current_pnl_percent:.2f}%")
-                    return f"Petit profit sécurisé ({current_pnl_percent:.2f}%)"
-                
-                # RSI défavorable = sortie prioritaire
-                if current_rsi is not None and trade.rsi_value:
-                    rsi_very_unfavorable = False
-                    if trade.rsi_value < 40 and current_rsi > self.config.INTELLIGENT_EXIT_RSI_EXTREME_HIGH:  # Forte détérioration
-                        rsi_very_unfavorable = True
-                    elif trade.rsi_value > 60 and current_rsi < self.config.INTELLIGENT_EXIT_RSI_EXTREME_LOW:  # Forte détérioration
-                        rsi_very_unfavorable = True
-                    
-                    if rsi_very_unfavorable:
-                        self.logger.info(f"📊 {trade.pair} - Sortie RSI très défavorable ({self.config.INTELLIGENT_EXIT_PHASE2_DURATION}-{self.config.INTELLIGENT_EXIT_PHASE3_DURATION}min): RSI {trade.rsi_value:.1f}→{current_rsi:.1f}")
-                        return f"RSI très défavorable ({current_rsi:.1f})"
-            
-            # 🔴 PHASE 4: Z+ minutes - Timeout obligatoire
-            elif duration_minutes > self.config.INTELLIGENT_EXIT_PHASE4_TIMEOUT:
-                self.logger.info(f"⏰ {trade.pair} - Timeout {self.config.INTELLIGENT_EXIT_PHASE4_TIMEOUT//60}h atteint: P&L {current_pnl_percent:.2f}%")
-                return f"Timeout {self.config.INTELLIGENT_EXIT_PHASE4_TIMEOUT//60}h (P&L: {current_pnl_percent:.2f}%)"
-            
-            return None  # Continuer la position
-            
-        except Exception as e:
-            self.logger.error(f"❌ Erreur vérification sortie intelligente {trade.pair}: {e}")
-            return None
-=======
         # Indicateurs techniques
         from indicators import TechnicalIndicators
         self.indicators = TechnicalIndicators(config)
@@ -477,17 +179,13 @@ class TradeExecutor:
                 
         except Exception as e:
             self.logger.error(f"❌ Erreur synchronisation positions: {e}")
->>>>>>> feature/clean-config
     
     async def can_open_trade(self, pair: str) -> Tuple[bool, str]:
         """Vérifie si un nouveau trade peut être ouvert"""
         
-<<<<<<< HEAD
-=======
         # SYNCHRONISATION D'ABORD avec Binance
         await self.sync_positions_with_binance()
         
->>>>>>> feature/clean-config
         # Vérification pause
         if self.is_paused:
             if self.pause_until and datetime.now() > self.pause_until:
@@ -584,23 +282,10 @@ class TradeExecutor:
             # Calcul de la quantité
             quantity = position_size_usdc / current_price
             
-<<<<<<< HEAD
-            # 🔧 FORMATAGE DE LA QUANTITÉ selon les règles Binance
-            quantity = await self._format_quantity(pair, quantity)
-            
-=======
->>>>>>> feature/clean-config
             # Calcul stop loss et take profit
             stop_loss_price = current_price * (1 - self.config.STOP_LOSS_PERCENT / 100)
             take_profit_price = current_price * (1 + self.config.TAKE_PROFIT_PERCENT / 100)
             
-<<<<<<< HEAD
-            # 🔧 FORMATAGE DES PRIX selon les règles Binance
-            stop_loss_price = await self._format_price(pair, stop_loss_price)
-            take_profit_price = await self._format_price(pair, take_profit_price)
-            
-=======
->>>>>>> feature/clean-config
             # Génération ID trade
             trade_id = f"{pair}_{int(time.time())}"
             
@@ -707,303 +392,6 @@ class TradeExecutor:
             return False
     
     async def _setup_exit_orders(self, trade: Trade):
-<<<<<<< HEAD
-        """Met en place les ordres de sortie (SL/TP) automatiques dans Binance - VERSION ULTRA ROBUSTE avec répartition intelligente"""
-        try:
-            # Vérification des types d'ordres supportés
-            symbol_info = await self.data_fetcher.get_symbol_info(trade.pair)
-            supported_order_types = symbol_info.get('orderTypes', []) if symbol_info else []
-            
-            self.logger.info(f"📋 Types d'ordres supportés pour {trade.pair}: {supported_order_types}")
-            
-            # 🧠 STRATÉGIE INTELLIGENTE : Calcul de répartition optimale pour SL/TP
-            # Estimation du prix SL pour calculer la valeur NOTIONAL minimale
-            stop_loss_price_estimate = trade.stop_loss
-            min_sl_quantity_for_notional = (6.0 / stop_loss_price_estimate) * 1.1  # +10% de marge pour 5 USDC min
-            
-            # Formatage robuste de la quantité avec vérifications multiples
-            try:
-                formatted_quantity = await self._format_quantity(trade.pair, trade.quantity)
-                
-                # Double vérification - si formatage donne 0, on essaie une approche différente
-                if formatted_quantity <= 0:
-                    try:
-                        # Récupération manuelle des règles de formatage
-                        if symbol_info and 'filters' in symbol_info:
-                            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-                            if lot_size_filter:
-                                step_size = float(lot_size_filter['stepSize'])
-                                # Arrondir à la step_size inférieure
-                                formatted_quantity = (trade.quantity // step_size) * step_size
-                                self.logger.info(f"🔧 Formatage manuel quantité {trade.pair}: {trade.quantity:.8f} → {formatted_quantity:.8f}")
-                    except Exception as e:
-                        self.logger.error(f"❌ Erreur formatage manuel {trade.pair}: {e}")
-                
-                if formatted_quantity <= 0:
-                    self.logger.warning(f"⚠️ Impossible de formater quantité {trade.pair}: {trade.quantity:.8f} → passage en gestion manuelle")
-                    return
-                
-                # 🚀 NOUVELLE STRATÉGIE ADAPTATIVE RSI : Répartition intelligente basée sur les conditions de marché
-                # Calcul de la stratégie optimale selon le RSI
-                sl_percentage, tp_percentage, strategy_name = await self.get_rsi_distribution_strategy(trade.pair)
-                
-                # Calcul des quantités optimales pour garantir SL avec valeur NOTIONAL suffisante
-                
-                # Estimation du prix SL pour calculer la valeur NOTIONAL minimale
-                stop_loss_price_estimate = trade.stop_loss
-                min_sl_quantity_for_notional = (6.0 / stop_loss_price_estimate) * 1.1  # +10% de marge pour 5 USDC min
-                
-                # 🎯 STRATÉGIE ADAPTATIVE RSI DE RÉPARTITION avec VÉRIFICATION BALANCE
-                # Répartition basée sur les conditions de marché (RSI)
-                if formatted_quantity > min_sl_quantity_for_notional * 1.5:  # Seuil plus bas pour permettre plus de répartitions
-                    
-                    # Calcul des quantités selon la stratégie RSI
-                    sl_target_quantity = formatted_quantity * (sl_percentage / 100)
-                    tp_target_quantity = formatted_quantity * (tp_percentage / 100)
-                    
-                    # S'assurer que la quantité SL respecte le minimum NOTIONAL
-                    if sl_target_quantity < min_sl_quantity_for_notional:
-                        sl_target_quantity = min_sl_quantity_for_notional
-                        tp_target_quantity = formatted_quantity - sl_target_quantity
-                    
-                    # 🔧 VÉRIFICATION CRITIQUE: S'assurer que TP + SL <= quantité totale
-                    total_allocated = sl_target_quantity + tp_target_quantity
-                    if total_allocated > formatted_quantity:
-                        # Réduction proportionnelle pour respecter la quantité totale
-                        ratio = formatted_quantity / total_allocated
-                        sl_target_quantity = sl_target_quantity * ratio
-                        tp_target_quantity = tp_target_quantity * ratio
-                        self.logger.warning(f"⚠️ {trade.pair} - Ajustement quantités: TP+SL > Total, ratio appliqué: {ratio:.3f}")
-                    
-                    # Formatage des quantités finales
-                    reserved_sl_quantity = await self._format_quantity(trade.pair, sl_target_quantity)
-                    tp_quantity = await self._format_quantity(trade.pair, tp_target_quantity)
-                    
-                    # 🔧 DOUBLE VÉRIFICATION: Après formatage, vérifier que TP + SL <= Total
-                    if reserved_sl_quantity + tp_quantity > formatted_quantity:
-                        # Priorité au TP, ajuster le SL
-                        reserved_sl_quantity = formatted_quantity - tp_quantity
-                        reserved_sl_quantity = max(0, await self._format_quantity(trade.pair, reserved_sl_quantity))
-                        self.logger.warning(f"⚠️ {trade.pair} - Ajustement post-formatage: SL ajusté à {reserved_sl_quantity}")
-                    
-                    # Vérifier que les quantités formatées sont valides
-                    if reserved_sl_quantity > 0 and tp_quantity > 0:
-                        # Vérifier que la valeur NOTIONAL SL est suffisante
-                        estimated_notional = reserved_sl_quantity * stop_loss_price_estimate
-                        if estimated_notional >= 5.0:
-                            self.logger.info(f"🧠 Stratégie RSI {strategy_name} pour {trade.pair}:")
-                            self.logger.info(f"   📊 Total: {formatted_quantity:.8f}")
-                            self.logger.info(f"   🎯 TP ({tp_percentage:.0f}%): {tp_quantity:.8f}")
-                            self.logger.info(f"   🛡️ SL ({sl_percentage:.0f}%): {reserved_sl_quantity:.8f} (≈{estimated_notional:.2f} USDC)")
-                            
-                            # Utiliser les quantités calculées selon RSI
-                            tp_order_quantity = tp_quantity
-                            sl_reserved_quantity = reserved_sl_quantity
-                        else:
-                            # Quantité SL trop petite en valeur, mode standard
-                            tp_order_quantity = formatted_quantity
-                            sl_reserved_quantity = None
-                            self.logger.info(f"⚠️ Quantité SL RSI {trade.pair} trop petite ({estimated_notional:.2f} USDC < 5 USDC) - Mode standard")
-                    else:
-                        # Formatage échoué, mode standard
-                        tp_order_quantity = formatted_quantity
-                        sl_reserved_quantity = None
-                        self.logger.info(f"⚠️ Formatage quantités RSI {trade.pair} impossible - Mode standard")
-                else:
-                    # Si quantité insuffisante pour diviser selon RSI, utiliser toute la quantité pour TP
-                    tp_order_quantity = formatted_quantity
-                    sl_reserved_quantity = None
-                    self.logger.info(f"⚠️ Quantité {trade.pair} insuffisante pour répartition RSI - Mode standard")
-                    
-            except Exception as e:
-                self.logger.error(f"❌ Erreur formatage quantité {trade.pair}: {e}")
-                tp_order_quantity = trade.quantity
-                sl_reserved_quantity = None
-                
-        except Exception as e:
-            self.logger.error(f"❌ Erreur formatage quantité {trade.pair}: {e}")
-            self.logger.warning("⚠️ Passage en gestion manuelle des SL/TP")
-            return
-        
-        # 1. Ordre Take Profit - Stratégie robuste avec fallbacks
-        tp_order_placed = False
-        
-        # Essai TAKE_PROFIT_LIMIT d'abord (recommandé pour Spot)
-        if 'TAKE_PROFIT_LIMIT' in supported_order_types and tp_order_quantity > 0:
-            try:
-                    tp_order = await self.data_fetcher.place_order(
-                        symbol=trade.pair,
-                        side="SELL",
-                        order_type="TAKE_PROFIT_LIMIT",
-                        quantity=tp_order_quantity,
-                        price=trade.take_profit,
-                        stopPrice=trade.take_profit,
-                        timeInForce="GTC"
-                    )
-                    trade.take_profit_order_id = tp_order['orderId']
-                    self.logger.info(f"✅ TP automatique (TAKE_PROFIT_LIMIT) placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
-                    tp_order_placed = True
-            except Exception as e:
-                    self.logger.error(f"❌ Erreur TAKE_PROFIT_LIMIT: {e}")
-            
-        # Fallback: TAKE_PROFIT (SANS timeInForce - pas supporté)
-        if not tp_order_placed and 'TAKE_PROFIT' in supported_order_types and tp_order_quantity > 0:
-            try:
-                    tp_order = await self.data_fetcher.place_order(
-                        symbol=trade.pair,
-                        side="SELL",
-                        order_type="TAKE_PROFIT",
-                        quantity=tp_order_quantity,
-                        stopPrice=trade.take_profit
-                        # timeInForce pas supporté pour TAKE_PROFIT
-                    )
-                    trade.take_profit_order_id = tp_order['orderId']
-                    self.logger.info(f"✅ TP automatique (TAKE_PROFIT) placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
-                    tp_order_placed = True
-            except Exception as e:
-                    self.logger.error(f"❌ Erreur TAKE_PROFIT: {e}")    
-            
-        # Fallback final: LIMIT classique
-        if not tp_order_placed and 'LIMIT' in supported_order_types and tp_order_quantity > 0:
-            try:
-                tp_order = await self.data_fetcher.place_order(
-                    symbol=trade.pair,
-                    side="SELL",
-                    order_type="LIMIT",
-                    quantity=tp_order_quantity,
-                    price=trade.take_profit,
-                    timeInForce="GTC"
-                )
-                trade.take_profit_order_id = tp_order['orderId']
-                self.logger.info(f"✅ TP automatique (LIMIT) placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
-                tp_order_placed = True
-            except Exception as e:
-                self.logger.error(f"❌ Erreur ordre TP LIMIT: {e}")
-        
-        if not tp_order_placed:
-            self.logger.warning(f"⚠️ Impossible de placer TP automatique pour {trade.pair}")
-        
-        # 2. Ordre Stop Loss avec Trailing Stop - Version ultra robuste avec logique intelligente
-        sl_order_placed = False
-        
-        # Conversion du pourcentage en BIPS pour trailing stop (ex: 0.3% -> 30 BIPS)
-        trailing_delta_bips = int(self.config.TRAILING_STOP_DISTANCE * 100) if self.config.TRAILING_STOP_ENABLED else None
-        
-        # 🎯 NOUVELLE LOGIQUE: Utiliser la quantité réservée si disponible
-        sl_quantity_to_use = sl_reserved_quantity if sl_reserved_quantity is not None else tp_order_quantity
-        
-        # 🔧 VÉRIFICATION BALANCE DISPONIBLE avant placement SL
-        if sl_quantity_to_use > 0:
-            try:
-                # Récupération du solde actuel pour la paire
-                balance = await self.data_fetcher.get_account_balance()
-                base_asset = trade.pair.replace('USDC', '').replace('USDT', '')  # Extraire l'asset de base (ETH, BTC, etc.)
-                available_quantity = float(balance.get(base_asset, {}).get('free', 0))
-                
-                # Vérifier qu'on a suffisamment de quantité disponible
-                if available_quantity < sl_quantity_to_use:
-                    self.logger.warning(f"⚠️ {trade.pair} - Balance insuffisante pour SL: {available_quantity:.8f} < {sl_quantity_to_use:.8f}")
-                    # Ajuster la quantité SL au maximum disponible
-                    sl_quantity_to_use = min(available_quantity * 0.95, sl_quantity_to_use)  # 95% pour marge de sécurité
-                    sl_quantity_to_use = await self._format_quantity(trade.pair, sl_quantity_to_use)
-                    
-                    if sl_quantity_to_use <= 0:
-                        self.logger.warning(f"⚠️ {trade.pair} - Quantité SL ajustée trop petite, skip SL automatique")
-                        sl_quantity_to_use = 0
-                    else:
-                        self.logger.info(f"🔧 {trade.pair} - Quantité SL ajustée: {sl_quantity_to_use:.8f}")
-                        
-            except Exception as e:
-                self.logger.warning(f"⚠️ Erreur vérification balance {trade.pair}: {e} - Continue avec quantité originale")
-            
-            notional_value = sl_quantity_to_use * trade.stop_loss
-            if notional_value < 5.0:  # Valeur minimale généralement 5 USDC
-                self.logger.warning(f"⚠️ Valeur SL {trade.pair} trop petite: {notional_value:.2f} USDC < 5 USDC - Skip SL automatique")
-                sl_quantity_to_use = 0
-            else:
-                if sl_reserved_quantity is not None:
-                    self.logger.info(f"✅ Utilisation quantité SL réservée: {sl_quantity_to_use:.8f} (≈{notional_value:.2f} USDC)")
-                else:
-                    self.logger.info(f"✅ Valeur SL {trade.pair} suffisante: {notional_value:.2f} USDC")
-            
-            # Essai STOP_LOSS_LIMIT avec trailing stop d'abord (recommandé pour Spot)
-            if 'STOP_LOSS_LIMIT' in supported_order_types and sl_quantity_to_use > 0:
-                try:
-                    order_params = {
-                        'symbol': trade.pair,
-                        'side': "SELL",
-                        'order_type': "STOP_LOSS_LIMIT",
-                        'quantity': sl_quantity_to_use,
-                        'price': trade.stop_loss,
-                        'timeInForce': 'GTC'
-                    }
-                    
-                    # Ajout du trailing stop si activé
-                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
-                        order_params['trailingDelta'] = trailing_delta_bips
-                        # Pour un trailing stop, stopPrice est optionnel - omis pour démarrage immédiat
-                        self.logger.info(f"📈 Trailing Stop activé: {self.config.TRAILING_STOP_DISTANCE}% ({trailing_delta_bips} BIPS)")
-                    else:
-                        order_params['stopPrice'] = trade.stop_loss
-                    
-                    sl_order = await self.data_fetcher.place_order(**order_params)
-                    trade.stop_loss_order_id = sl_order['orderId']
-                    
-                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
-                        trade.trailing_stop_active = True
-                        self.logger.info(f"✅ SL automatique avec Trailing Stop (STOP_LOSS_LIMIT) placé: {self.config.TRAILING_STOP_DISTANCE}% trailing (ID: {sl_order['orderId']})")
-                    else:
-                        self.logger.info(f"✅ SL automatique (STOP_LOSS_LIMIT) placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
-                    
-                    sl_order_placed = True
-                except Exception as e:
-                    self.logger.error(f"❌ Erreur STOP_LOSS_LIMIT: {e}")
-            
-            # Fallback: Essai STOP_LOSS si STOP_LOSS_LIMIT échoue (SANS timeInForce)
-            if not sl_order_placed and 'STOP_LOSS' in supported_order_types and sl_quantity_to_use > 0:
-                try:
-                    order_params = {
-                        'symbol': trade.pair,
-                        'side': "SELL",
-                        'order_type': "STOP_LOSS",
-                        'quantity': sl_quantity_to_use
-                        # timeInForce pas supporté pour STOP_LOSS
-                    }
-                    
-                    # Ajout du trailing stop si activé
-                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
-                        order_params['trailingDelta'] = trailing_delta_bips
-                        # Pour un trailing stop, stopPrice est optionnel
-                        self.logger.info(f"📈 Trailing Stop activé: {self.config.TRAILING_STOP_DISTANCE}% ({trailing_delta_bips} BIPS)")
-                    else:
-                        order_params['stopPrice'] = trade.stop_loss
-                    
-                    sl_order = await self.data_fetcher.place_order(**order_params)
-                    trade.stop_loss_order_id = sl_order['orderId']
-                    
-                    if self.config.TRAILING_STOP_ENABLED and trailing_delta_bips:
-                        trade.trailing_stop_active = True
-                        self.logger.info(f"✅ SL automatique avec Trailing Stop (STOP_LOSS) placé: {self.config.TRAILING_STOP_DISTANCE}% trailing (ID: {sl_order['orderId']})")
-                    else:
-                        self.logger.info(f"✅ SL automatique (STOP_LOSS) placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
-                    
-                    sl_order_placed = True
-                except Exception as e:
-                    self.logger.error(f"❌ Erreur STOP_LOSS: {e}")
-            
-            if not sl_order_placed:
-                self.logger.warning(f"⚠️ Impossible de placer SL automatique pour {trade.pair} - Gestion manuelle activée")
-            
-            # 3. Logging des résultats
-            if tp_order_placed and sl_order_placed:
-                self.logger.info(f"📊 Ordres automatiques TP et SL configurés pour {trade.pair}")
-            elif tp_order_placed:
-                self.logger.info(f"📊 Ordre TP automatique configuré pour {trade.pair} - SL en gestion manuelle")
-            elif sl_order_placed:
-                self.logger.info(f"📊 Ordre SL automatique configuré pour {trade.pair} - TP en gestion manuelle")
-            else:
-                self.logger.warning(f"⚠️ Aucun ordre automatique pour {trade.pair} - Surveillance manuelle requise")
-=======
         """Met en place les ordres de sortie (SL/TP) automatiques dans Binance"""
         try:
             # CORRECTION: Placement des ordres SL/TP automatiques dans Binance
@@ -1095,19 +483,15 @@ class TradeExecutor:
                 
         except Exception as e:
             self.logger.error(f"❌ Erreur vérification trailing stop: {e}")
->>>>>>> feature/clean-config
     
     async def monitor_positions(self):
         """Surveille les positions ouvertes"""
         for trade_id, trade in list(self.active_trades.items()):
             try:
-<<<<<<< HEAD
-=======
                 # Vérifier activation du trailing stop si en attente
                 if self.trading_config.TRAILING_STOP_ENABLED:
                     await self._check_trailing_stop_activation(trade)
                 
->>>>>>> feature/clean-config
                 await self._check_exit_conditions(trade)
             except Exception as e:
                 self.logger.error(f"❌ Erreur monitoring {trade.pair}: {e}")
@@ -1115,53 +499,24 @@ class TradeExecutor:
     async def _check_exit_conditions(self, trade: Trade):
         """Vérifie les conditions de sortie pour un trade"""
         try:
-<<<<<<< HEAD
-            # Récupération du prix actuel avec gestion d'erreur robuste
-            ticker = await self.data_fetcher.get_ticker_price(trade.pair)
-            
-            # Vérification que le ticker contient bien le prix
-            if not ticker or 'price' not in ticker:
-                self.logger.warning(f"⚠️ Prix manquant pour {trade.pair}, skip monitoring")
-                return
-                
-=======
             # Récupération du prix actuel
             ticker = await self.data_fetcher.get_ticker_price(trade.pair)
->>>>>>> feature/clean-config
             current_price = float(ticker['price'])
             
             # Calcul P&L actuel
             current_pnl_percent = ((current_price - trade.entry_price) / trade.entry_price) * 100
             
-<<<<<<< HEAD
-            # 🧠 NOUVELLE PRIORITÉ 1: Vérification sortie intelligente RSI + Temps
-            intelligent_exit_reason = await self._check_intelligent_exit_conditions(trade, current_price, current_pnl_percent)
-            if intelligent_exit_reason:
-                await self._close_trade(trade, current_price, ExitReason.INTELLIGENT_EXIT)
-                return
-            
-            # 2. Vérification Take Profit (unchanged)
-=======
             # 1. Vérification Take Profit
->>>>>>> feature/clean-config
             if current_price >= trade.take_profit:
                 await self._close_trade(trade, current_price, ExitReason.TAKE_PROFIT)
                 return
             
-<<<<<<< HEAD
-            # 3. Vérification Stop Loss (unchanged)
-=======
             # 2. Vérification Stop Loss
->>>>>>> feature/clean-config
             if current_price <= trade.stop_loss:
                 await self._close_trade(trade, current_price, ExitReason.STOP_LOSS)
                 return
             
-<<<<<<< HEAD
-            # 4. Vérification timeout adaptatif (unchanged - backup uniquement)
-=======
             # 3. Vérification timeout adaptatif
->>>>>>> feature/clean-config
             if self.config.TIMEOUT_ENABLED:
                 duration = (datetime.now() - trade.timestamp).total_seconds() / 60  # en minutes
                 if (duration >= self.config.TIMEOUT_MINUTES and
@@ -1169,11 +524,7 @@ class TradeExecutor:
                     await self._close_trade(trade, current_price, ExitReason.TIMEOUT)
                     return
             
-<<<<<<< HEAD
-            # 5. Vérification sortie anticipée (unchanged - backup uniquement)
-=======
             # 4. Vérification sortie anticipée
->>>>>>> feature/clean-config
             if self.config.EARLY_EXIT_ENABLED:
                 duration_minutes = (datetime.now() - trade.timestamp).total_seconds() / 60
                 
@@ -1189,11 +540,6 @@ class TradeExecutor:
                             await self._close_trade(trade, current_price, ExitReason.EARLY_EXIT)
                             return
             
-<<<<<<< HEAD
-        except Exception as e:
-            self.logger.error(f"❌ Erreur vérification conditions sortie {trade.pair}: {e}")
-    
-=======
             # 5. Trailing Stop (si activé)
             if self.risk_config.TRAILING_STOP_ENABLED:
                 await self._update_trailing_stop(trade, current_price, current_pnl_percent)
@@ -1229,7 +575,6 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"❌ Erreur trailing stop {trade.pair}: {e}")
     
->>>>>>> feature/clean-config
     async def _close_trade(self, trade: Trade, exit_price: float, exit_reason: ExitReason):
         """Ferme un trade"""
         try:
@@ -1402,18 +747,7 @@ class TradeExecutor:
         try:
             # Firebase
             if self.firebase_logger:
-                await self.firebase_logger.log_trade_open(
-                    pair=trade.pair,
-                    entry_price=trade.entry_price,
-                    quantity=trade.quantity,
-                    take_profit=trade.take_profit,
-                    stop_loss=trade.stop_loss,
-<<<<<<< HEAD
-                    analysis_data={}  # TODO: Passer les données d'analyse
-=======
-                    analysis_data=trade.analysis_data
->>>>>>> feature/clean-config
-                )
+                await self.firebase_logger.log_trade_open(asdict(trade))
             
             # Telegram
             if self.telegram_notifier:
