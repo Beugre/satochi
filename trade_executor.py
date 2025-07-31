@@ -105,10 +105,10 @@ class Trade:
 class TradeExecutor:
     """Exécuteur de trades avec gestion complète du cycle de vie"""
     
-    def __init__(self, data_fetcher, config, firebase_logger=None, telegram_notifier=None):
+    def __init__(self, data_fetcher, config, risk_config, firebase_logger=None, telegram_notifier=None):
         self.data_fetcher = data_fetcher
         self.config = config
-        self.risk_config = config  # risk_config fait maintenant partie de config
+        self.risk_config = risk_config
         self.firebase_logger = firebase_logger
         self.telegram_notifier = telegram_notifier
         self.logger = logging.getLogger(__name__)
@@ -129,10 +129,62 @@ class TradeExecutor:
         self.is_paused = False
         self.pause_until = None
         
-        self.logger.info("💼 Trade Executor initialisé")
+        # Indicateurs techniques
+        from indicators import TechnicalIndicators
+        self.indicators = TechnicalIndicators(config)
+        
+        self.logger.info("� Indicateurs techniques RSI initialisés")
+        self.logger.info("�💼 Trade Executor initialisé")
+    
+    async def sync_positions_with_binance(self):
+        """Synchronise les positions actives avec l'état réel de Binance"""
+        try:
+            if not self.active_trades:
+                return
+            
+            # Récupérer les balances actuels depuis Binance
+            account_info = await self.data_fetcher.get_account_balance()
+            
+            positions_to_remove = []
+            
+            for trade_id, trade in self.active_trades.items():
+                symbol_without_usdc = trade.pair.replace('USDC', '')
+                
+                # Vérifier si on a encore du balance de cette crypto
+                has_balance = False
+                if symbol_without_usdc in account_info:
+                    balance = float(account_info[symbol_without_usdc]['free'])
+                    locked = float(account_info[symbol_without_usdc]['locked'])
+                    total_balance = balance + locked
+                    
+                    # Si le balance est très proche de la quantité de la position
+                    if abs(total_balance - trade.quantity) < 0.001:
+                        has_balance = True
+                
+                # Si plus de balance, la position a été fermée automatiquement
+                if not has_balance:
+                    self.logger.info(f"🔄 Trade {trade.pair} fermé automatiquement par TP/SL - Suppression de active_trades")
+                    positions_to_remove.append(trade_id)
+            
+            # Supprimer les positions fermées
+            for trade_id in positions_to_remove:
+                if trade_id in self.active_trades:
+                    del self.active_trades[trade_id]
+            
+            # Mettre à jour le compteur
+            self.position_count = len(self.active_trades)
+            
+            if positions_to_remove:
+                self.logger.info(f"🗑️ {len(positions_to_remove)} position(s) supprimée(s) de active_trades. Positions restantes: {len(self.active_trades)}")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur synchronisation positions: {e}")
     
     async def can_open_trade(self, pair: str) -> Tuple[bool, str]:
         """Vérifie si un nouveau trade peut être ouvert"""
+        
+        # SYNCHRONISATION D'ABORD avec Binance
+        await self.sync_positions_with_binance()
         
         # Vérification pause
         if self.is_paused:
@@ -695,7 +747,14 @@ class TradeExecutor:
         try:
             # Firebase
             if self.firebase_logger:
-                await self.firebase_logger.log_trade_open(asdict(trade))
+                await self.firebase_logger.log_trade_open(
+                    pair=trade.pair,
+                    entry_price=trade.entry_price,
+                    quantity=trade.quantity,
+                    take_profit=trade.take_profit,
+                    stop_loss=trade.stop_loss,
+                    analysis_data=trade.analysis_data
+                )
             
             # Telegram
             if self.telegram_notifier:
