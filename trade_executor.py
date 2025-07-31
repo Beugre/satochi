@@ -7,7 +7,10 @@ Gestionnaire d'exécution des trades avec gestion des risques
 import asyncio
 import logging
 import time
+<<<<<<< HEAD
 import pandas as pd
+=======
+>>>>>>> feature/clean-config
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, asdict
@@ -36,7 +39,10 @@ class ExitReason(Enum):
     STOP_LOSS = "STOP_LOSS"
     TIMEOUT = "TIMEOUT"
     EARLY_EXIT = "EARLY_EXIT"
+<<<<<<< HEAD
     INTELLIGENT_EXIT = "INTELLIGENT_EXIT"  # Nouvelle sortie intelligente basée RSI + temps
+=======
+>>>>>>> feature/clean-config
     MANUAL = "MANUAL"
     ERROR = "ERROR"
 
@@ -115,6 +121,7 @@ class TradeExecutor:
         self.telegram_notifier = telegram_notifier
         self.logger = logging.getLogger(__name__)
         
+<<<<<<< HEAD
         # Initialisation des indicateurs techniques pour stratégie RSI
         try:
             from indicators import TechnicalIndicators
@@ -124,6 +131,8 @@ class TradeExecutor:
             self.indicators = None
             self.logger.warning("⚠️ Module indicators non trouvé - Stratégie RSI désactivée")
         
+=======
+>>>>>>> feature/clean-config
         # Gestion des trades
         self.active_trades: Dict[str, Trade] = {}
         self.trade_history: List[Trade] = []
@@ -140,6 +149,7 @@ class TradeExecutor:
         self.is_paused = False
         self.pause_until = None
         
+<<<<<<< HEAD
         self.logger.info("💼 Trade Executor initialisé")
     
     async def _format_quantity(self, symbol: str, quantity: float) -> float:
@@ -416,10 +426,68 @@ class TradeExecutor:
         except Exception as e:
             self.logger.error(f"❌ Erreur vérification sortie intelligente {trade.pair}: {e}")
             return None
+=======
+        # Indicateurs techniques
+        from indicators import TechnicalIndicators
+        self.indicators = TechnicalIndicators(config)
+        
+        self.logger.info("� Indicateurs techniques RSI initialisés")
+        self.logger.info("�💼 Trade Executor initialisé")
+    
+    async def sync_positions_with_binance(self):
+        """Synchronise les positions actives avec l'état réel de Binance"""
+        try:
+            if not self.active_trades:
+                return
+            
+            # Récupérer les balances actuels depuis Binance
+            account_info = await self.data_fetcher.get_account_balance()
+            
+            positions_to_remove = []
+            
+            for trade_id, trade in self.active_trades.items():
+                symbol_without_usdc = trade.pair.replace('USDC', '')
+                
+                # Vérifier si on a encore du balance de cette crypto
+                has_balance = False
+                if symbol_without_usdc in account_info:
+                    balance = float(account_info[symbol_without_usdc]['free'])
+                    locked = float(account_info[symbol_without_usdc]['locked'])
+                    total_balance = balance + locked
+                    
+                    # Si le balance est très proche de la quantité de la position
+                    if abs(total_balance - trade.quantity) < 0.001:
+                        has_balance = True
+                
+                # Si plus de balance, la position a été fermée automatiquement
+                if not has_balance:
+                    self.logger.info(f"🔄 Trade {trade.pair} fermé automatiquement par TP/SL - Suppression de active_trades")
+                    positions_to_remove.append(trade_id)
+            
+            # Supprimer les positions fermées
+            for trade_id in positions_to_remove:
+                if trade_id in self.active_trades:
+                    del self.active_trades[trade_id]
+            
+            # Mettre à jour le compteur
+            self.position_count = len(self.active_trades)
+            
+            if positions_to_remove:
+                self.logger.info(f"🗑️ {len(positions_to_remove)} position(s) supprimée(s) de active_trades. Positions restantes: {len(self.active_trades)}")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur synchronisation positions: {e}")
+>>>>>>> feature/clean-config
     
     async def can_open_trade(self, pair: str) -> Tuple[bool, str]:
         """Vérifie si un nouveau trade peut être ouvert"""
         
+<<<<<<< HEAD
+=======
+        # SYNCHRONISATION D'ABORD avec Binance
+        await self.sync_positions_with_binance()
+        
+>>>>>>> feature/clean-config
         # Vérification pause
         if self.is_paused:
             if self.pause_until and datetime.now() > self.pause_until:
@@ -516,17 +584,23 @@ class TradeExecutor:
             # Calcul de la quantité
             quantity = position_size_usdc / current_price
             
+<<<<<<< HEAD
             # 🔧 FORMATAGE DE LA QUANTITÉ selon les règles Binance
             quantity = await self._format_quantity(pair, quantity)
             
+=======
+>>>>>>> feature/clean-config
             # Calcul stop loss et take profit
             stop_loss_price = current_price * (1 - self.config.STOP_LOSS_PERCENT / 100)
             take_profit_price = current_price * (1 + self.config.TAKE_PROFIT_PERCENT / 100)
             
+<<<<<<< HEAD
             # 🔧 FORMATAGE DES PRIX selon les règles Binance
             stop_loss_price = await self._format_price(pair, stop_loss_price)
             take_profit_price = await self._format_price(pair, take_profit_price)
             
+=======
+>>>>>>> feature/clean-config
             # Génération ID trade
             trade_id = f"{pair}_{int(time.time())}"
             
@@ -633,6 +707,7 @@ class TradeExecutor:
             return False
     
     async def _setup_exit_orders(self, trade: Trade):
+<<<<<<< HEAD
         """Met en place les ordres de sortie (SL/TP) automatiques dans Binance - VERSION ULTRA ROBUSTE avec répartition intelligente"""
         try:
             # Vérification des types d'ordres supportés
@@ -928,11 +1003,111 @@ class TradeExecutor:
                 self.logger.info(f"📊 Ordre SL automatique configuré pour {trade.pair} - TP en gestion manuelle")
             else:
                 self.logger.warning(f"⚠️ Aucun ordre automatique pour {trade.pair} - Surveillance manuelle requise")
+=======
+        """Met en place les ordres de sortie (SL/TP) automatiques dans Binance"""
+        try:
+            # CORRECTION: Placement des ordres SL/TP automatiques dans Binance
+            
+            # 1. Ordre Take Profit (LIMIT)
+            tp_order = await self.data_fetcher.place_order(
+                symbol=trade.pair,
+                side="SELL",
+                order_type="LIMIT",
+                quantity=trade.quantity,
+                price=trade.take_profit,
+                timeInForce="GTC"  # Good Till Cancelled
+            )
+            trade.take_profit_order_id = tp_order['orderId']
+            self.logger.info(f"✅ TP automatique placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
+            
+            # 2. Ordre Stop Loss (STOP_MARKET)
+            sl_order = await self.data_fetcher.place_order(
+                symbol=trade.pair,
+                side="SELL",
+                order_type="STOP_MARKET",
+                quantity=trade.quantity,
+                stopPrice=trade.stop_loss
+            )
+            trade.stop_loss_order_id = sl_order['orderId']
+            self.logger.info(f"✅ SL automatique placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
+            
+            # 3. Configuration du Trailing Stop (si activé)
+            if self.trading_config.TRAILING_STOP_ENABLED:
+                await self._setup_trailing_stop(trade)
+            
+            self.logger.info(f"📊 Ordres automatiques Binance configurés: SL={trade.stop_loss:.6f}, TP={trade.take_profit:.6f}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur setup ordres automatiques Binance: {e}")
+            # Fallback: gestion manuelle si ordres automatiques échouent
+            self.logger.warning("⚠️ Passage en gestion manuelle des SL/TP")
+    
+    async def _setup_trailing_stop(self, trade: Trade):
+        """Configure le trailing stop automatique Binance"""
+        try:
+            # Calculer le seuil d'activation du trailing stop
+            activation_price = trade.entry_price * (1 + self.trading_config.TRAILING_STOP_TRIGGER / 100)
+            
+            # Attendre que le prix atteigne le seuil d'activation
+            current_price = await self.data_fetcher.get_current_price(trade.pair)
+            
+            if current_price >= activation_price:
+                # Placer l'ordre trailing stop
+                trailing_order = await self.data_fetcher.place_order(
+                    symbol=trade.pair,
+                    side="SELL",
+                    order_type="TRAILING_STOP_MARKET",
+                    quantity=trade.quantity,
+                    callbackRate=self.trading_config.TRAILING_STOP_DISTANCE
+                )
+                
+                # Annuler l'ancien stop loss fixe
+                if trade.stop_loss_order_id:
+                    try:
+                        await self.data_fetcher.cancel_order(trade.pair, trade.stop_loss_order_id)
+                        self.logger.info(f"🗑️ Stop Loss fixe annulé (remplacé par trailing)")
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Erreur annulation SL fixe: {e}")
+                
+                trade.trailing_stop_order_id = trailing_order['orderId']
+                trade.trailing_stop_active = True
+                
+                self.logger.info(f"🔄 Trailing Stop activé: Delta {self.trading_config.TRAILING_STOP_DISTANCE}% (ID: {trailing_order['orderId']})")
+            else:
+                # Programmer une vérification ultérieure
+                trade.trailing_stop_pending = True
+                self.logger.info(f"⏳ Trailing Stop en attente - Prix cible: {activation_price:.6f}")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur setup trailing stop: {e}")
+    
+    async def _check_trailing_stop_activation(self, trade: Trade):
+        """Vérifie si le trailing stop doit être activé"""
+        try:
+            if not trade.trailing_stop_pending or trade.trailing_stop_active:
+                return
+            
+            current_price = await self.data_fetcher.get_current_price(trade.pair)
+            activation_price = trade.entry_price * (1 + self.trading_config.TRAILING_STOP_TRIGGER / 100)
+            
+            if current_price >= activation_price:
+                await self._setup_trailing_stop(trade)
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur vérification trailing stop: {e}")
+>>>>>>> feature/clean-config
     
     async def monitor_positions(self):
         """Surveille les positions ouvertes"""
         for trade_id, trade in list(self.active_trades.items()):
             try:
+<<<<<<< HEAD
+=======
+                # Vérifier activation du trailing stop si en attente
+                if self.trading_config.TRAILING_STOP_ENABLED:
+                    await self._check_trailing_stop_activation(trade)
+                
+>>>>>>> feature/clean-config
                 await self._check_exit_conditions(trade)
             except Exception as e:
                 self.logger.error(f"❌ Erreur monitoring {trade.pair}: {e}")
@@ -940,6 +1115,7 @@ class TradeExecutor:
     async def _check_exit_conditions(self, trade: Trade):
         """Vérifie les conditions de sortie pour un trade"""
         try:
+<<<<<<< HEAD
             # Récupération du prix actuel avec gestion d'erreur robuste
             ticker = await self.data_fetcher.get_ticker_price(trade.pair)
             
@@ -948,11 +1124,16 @@ class TradeExecutor:
                 self.logger.warning(f"⚠️ Prix manquant pour {trade.pair}, skip monitoring")
                 return
                 
+=======
+            # Récupération du prix actuel
+            ticker = await self.data_fetcher.get_ticker_price(trade.pair)
+>>>>>>> feature/clean-config
             current_price = float(ticker['price'])
             
             # Calcul P&L actuel
             current_pnl_percent = ((current_price - trade.entry_price) / trade.entry_price) * 100
             
+<<<<<<< HEAD
             # 🧠 NOUVELLE PRIORITÉ 1: Vérification sortie intelligente RSI + Temps
             intelligent_exit_reason = await self._check_intelligent_exit_conditions(trade, current_price, current_pnl_percent)
             if intelligent_exit_reason:
@@ -960,16 +1141,27 @@ class TradeExecutor:
                 return
             
             # 2. Vérification Take Profit (unchanged)
+=======
+            # 1. Vérification Take Profit
+>>>>>>> feature/clean-config
             if current_price >= trade.take_profit:
                 await self._close_trade(trade, current_price, ExitReason.TAKE_PROFIT)
                 return
             
+<<<<<<< HEAD
             # 3. Vérification Stop Loss (unchanged)
+=======
+            # 2. Vérification Stop Loss
+>>>>>>> feature/clean-config
             if current_price <= trade.stop_loss:
                 await self._close_trade(trade, current_price, ExitReason.STOP_LOSS)
                 return
             
+<<<<<<< HEAD
             # 4. Vérification timeout adaptatif (unchanged - backup uniquement)
+=======
+            # 3. Vérification timeout adaptatif
+>>>>>>> feature/clean-config
             if self.config.TIMEOUT_ENABLED:
                 duration = (datetime.now() - trade.timestamp).total_seconds() / 60  # en minutes
                 if (duration >= self.config.TIMEOUT_MINUTES and
@@ -977,7 +1169,11 @@ class TradeExecutor:
                     await self._close_trade(trade, current_price, ExitReason.TIMEOUT)
                     return
             
+<<<<<<< HEAD
             # 5. Vérification sortie anticipée (unchanged - backup uniquement)
+=======
+            # 4. Vérification sortie anticipée
+>>>>>>> feature/clean-config
             if self.config.EARLY_EXIT_ENABLED:
                 duration_minutes = (datetime.now() - trade.timestamp).total_seconds() / 60
                 
@@ -993,9 +1189,47 @@ class TradeExecutor:
                             await self._close_trade(trade, current_price, ExitReason.EARLY_EXIT)
                             return
             
+<<<<<<< HEAD
         except Exception as e:
             self.logger.error(f"❌ Erreur vérification conditions sortie {trade.pair}: {e}")
     
+=======
+            # 5. Trailing Stop (si activé)
+            if self.risk_config.TRAILING_STOP_ENABLED:
+                await self._update_trailing_stop(trade, current_price, current_pnl_percent)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur vérification conditions sortie {trade.pair}: {e}")
+    
+    async def _update_trailing_stop(self, trade: Trade, current_price: float, current_pnl_percent: float):
+        """Met à jour le trailing stop"""
+        try:
+            # Démarrage du trailing stop si profit >= seuil
+            if current_pnl_percent >= self.risk_config.TRAILING_START_PERCENT:
+                
+                # Calcul du nouveau stop loss
+                trailing_distance = self.risk_config.TRAILING_STEP_PERCENT / 100
+                new_stop_loss = current_price * (1 - trailing_distance)
+                
+                # Mise à jour seulement si le nouveau SL est plus élevé
+                if new_stop_loss > trade.stop_loss:
+                    old_stop_loss = trade.stop_loss
+                    trade.stop_loss = new_stop_loss
+                    
+                    self.logger.info(f"🔄 Trailing stop mis à jour {trade.pair}: {old_stop_loss:.6f} -> {new_stop_loss:.6f}")
+                    
+                    # Notification Telegram
+                    if self.telegram_notifier:
+                        await self.telegram_notifier.send_position_update({
+                            'pair': trade.pair,
+                            'current_pnl': current_pnl_percent,
+                            'trailing_stop': new_stop_loss
+                        })
+                        
+        except Exception as e:
+            self.logger.error(f"❌ Erreur trailing stop {trade.pair}: {e}")
+    
+>>>>>>> feature/clean-config
     async def _close_trade(self, trade: Trade, exit_price: float, exit_reason: ExitReason):
         """Ferme un trade"""
         try:
@@ -1174,7 +1408,11 @@ class TradeExecutor:
                     quantity=trade.quantity,
                     take_profit=trade.take_profit,
                     stop_loss=trade.stop_loss,
+<<<<<<< HEAD
                     analysis_data={}  # TODO: Passer les données d'analyse
+=======
+                    analysis_data=trade.analysis_data
+>>>>>>> feature/clean-config
                 )
             
             # Telegram

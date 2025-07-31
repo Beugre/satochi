@@ -40,12 +40,20 @@ class TradingConfig:
     LOOKBACK_CANDLES: int = 5                   # Nombre bougies lookback
     
     # 💰 GESTION POSITION
+<<<<<<< HEAD
     POSITION_SIZE_PERCENT: float = 5.0          # % du capital par position
+=======
+    POSITION_SIZE_PERCENT: float = 5.0         # % du capital par position
+>>>>>>> feature/clean-config
     MAX_POSITIONS: int = 2                      # Max positions simultanées
     MAX_OPEN_POSITIONS: int = 2                 # Alias pour compatibilité (telegram_notifier)
     MIN_POSITION_SIZE_USDC: float = 50.0        # Taille min position
     MAX_POSITION_SIZE_USDC: float = 500.0       # Taille max position
+<<<<<<< HEAD
 
+=======
+    
+>>>>>>> feature/clean-config
     # 🎯 TAKE PROFIT / STOP LOSS
     TAKE_PROFIT_PERCENT: float = 0.9            # TP: +0.9%
     STOP_LOSS_PERCENT: float = 0.4              # SL: -0.4%
@@ -97,6 +105,7 @@ class TradingConfig:
     TRADING_END_HOUR: int = 22                  # Fin trading (22h UTC)
     WEEKEND_TRADING_ENABLED: bool = True        # Trading week-end
     
+<<<<<<< HEAD
     # 🧠 SORTIE INTELLIGENTE RSI + TEMPS
     INTELLIGENT_EXIT_ENABLED: bool = True       # Activation sortie intelligente
     INTELLIGENT_EXIT_PHASE1_DURATION: int = 15  # Phase 1: 0-15 minutes (protection)
@@ -128,6 +137,16 @@ class TradingConfig:
     MIN_PRICE_USDC: float = 0.00001                        # Prix minimum 0.00001 USDC (évite tokens trop volatils)
     MAX_PRICE_PRECISION: int = 20                           # Précision maximale autorisée (évite erreurs formatage)
     MICRO_PRICE_SYMBOLS: List[str] = field(default_factory=lambda: ["PEPEUSDC", "SHIBUSDC", "FLOKIUSDC"])  # Symboles micro-prix à surveiller
+=======
+    # 🚫 FILTRES
+    BLACKLISTED_SYMBOLS: List[str] = field(default_factory=lambda: ["XRPUSDC", "DOGEUSDC", "PEPEUSDC"])  # Symboles interdits
+    BLACKLISTED_PAIRS: List[str] = field(default_factory=list)                                          # Paires interdites (alias)
+    PRIORITY_PAIRS: List[str] = field(default_factory=lambda: ["BTCUSDC", "ETHUSDC", "SOLUSDC", "ADAUSDC", "DOTUSDC"])  # Paires prioritaires
+    MAX_PAIRS_PER_SCAN: int = 7                             # Limite à 7 paires par scan
+    MIN_VOLUME_USDC: float = 80000000.0                     # Volume min USDC
+    MAX_SPREAD_PERCENT: float = 0.15                        # Spread max 0.15%
+    MIN_VOLATILITY_PERCENT: float = 0.7                     # Volatilité min 0.7%
+>>>>>>> feature/clean-config
 
     def __post_init__(self):
         # Plus besoin de __post_init__ car les listes sont gérées par default_factory

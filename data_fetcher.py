@@ -79,6 +79,155 @@ class DataFetcher:
             self.logger.error(f"❌ Test connexion Binance échoué: {e}")
             raise
     
+<<<<<<< HEAD
+=======
+    async def get_symbol_info(self, symbol: str) -> Dict:
+        """Récupère les informations de trading d'un symbole"""
+        cache_key = f"symbol_info_{symbol}"
+        
+        # Vérifier le cache (valide 1 heure)
+        if self._is_cache_valid(cache_key, 3600):
+            return self.cache[cache_key]
+        
+        try:
+            if self.binance_client:
+                exchange_info = self.binance_client.get_exchange_info()
+                
+                for symbol_info in exchange_info['symbols']:
+                    if symbol_info['symbol'] == symbol:
+                        # Extraire les informations importantes
+                        filters = {}
+                        for filter_info in symbol_info['filters']:
+                            filters[filter_info['filterType']] = filter_info
+                        
+                        info = {
+                            'symbol': symbol,
+                            'status': symbol_info['status'],
+                            'baseAsset': symbol_info['baseAsset'],
+                            'quoteAsset': symbol_info['quoteAsset'],
+                            'quotePrecision': symbol_info['quotePrecision'],
+                            'baseAssetPrecision': symbol_info['baseAssetPrecision'],
+                            'filters': filters
+                        }
+                        
+                        # Mettre en cache et retourner
+                        self._set_cache(cache_key, info)
+                        return info
+                
+                raise Exception(f"Symbole {symbol} non trouvé")
+            
+            else:
+                raise Exception("Client Binance non disponible")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur récupération info symbole {symbol}: {e}")
+            raise
+    
+    def round_quantity(self, symbol_info: Dict, quantity: float) -> float:
+        """Arrondit une quantité selon les règles du symbole"""
+        try:
+            self.logger.debug(f"🔍 Debug round_quantity pour {symbol_info.get('symbol', 'N/A')}")
+            self.logger.debug(f"🔍 Type symbol_info: {type(symbol_info)}")
+            self.logger.debug(f"🔍 Clés symbol_info: {list(symbol_info.keys()) if isinstance(symbol_info, dict) else 'N/A'}")
+            
+            # Vérifier que symbol_info est bien un dictionnaire
+            if not isinstance(symbol_info, dict):
+                self.logger.warning(f"⚠️ symbol_info n'est pas un dict: {type(symbol_info)}")
+                return quantity
+            
+            # Récupérer les filtres LOT_SIZE
+            filters = symbol_info.get('filters', {})
+            self.logger.debug(f"🔍 Type filters: {type(filters)}")
+            
+            # Si filters est une liste (format Binance brut), on la convertit en dict
+            if isinstance(filters, list):
+                self.logger.debug(f"🔍 Conversion des filtres de liste vers dict")
+                filters_dict = {}
+                for filter_info in filters:
+                    if isinstance(filter_info, dict) and 'filterType' in filter_info:
+                        filters_dict[filter_info['filterType']] = filter_info
+                filters = filters_dict
+                self.logger.debug(f"🔍 Filtres convertis: {list(filters.keys())}")
+            
+            if not isinstance(filters, dict):
+                self.logger.warning(f"⚠️ filters n'est pas un dict après conversion: {type(filters)}")
+                precision = symbol_info.get('baseAssetPrecision', 8)
+                self.logger.info(f"📏 Utilisation précision par défaut: {precision}")
+                return round(quantity, precision)
+            
+            lot_size_filter = filters.get('LOT_SIZE')
+            self.logger.debug(f"🔍 LOT_SIZE filter: {lot_size_filter}")
+            
+            if not lot_size_filter:
+                # Utiliser la précision de base si pas de filtre
+                precision = symbol_info.get('baseAssetPrecision', 8)
+                self.logger.info(f"📏 Pas de LOT_SIZE, utilisation précision base: {precision}")
+                return round(quantity, precision)
+            
+            step_size = float(lot_size_filter['stepSize'])
+            min_qty = float(lot_size_filter['minQty'])
+            
+            self.logger.debug(f"🔍 stepSize: {step_size}, minQty: {min_qty}")
+            
+            # Arrondir à la step_size la plus proche
+            if step_size == 0:
+                return quantity
+            
+            # Calculer le nombre de décimales dans step_size
+            step_str = f"{step_size:.10f}".rstrip('0')
+            if '.' in step_str:
+                decimals = len(step_str.split('.')[1])
+            else:
+                decimals = 0
+            
+            # Arrondir vers le bas à la step_size
+            rounded = (quantity // step_size) * step_size
+            rounded = round(rounded, decimals)
+            
+            # Vérifier la quantité minimum
+            if rounded < min_qty:
+                rounded = min_qty
+            
+            self.logger.info(f"📏 Quantité arrondie: {quantity} -> {rounded} (decimals: {decimals})")
+            return rounded
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Erreur arrondi quantité: {e}, utilisation quantité originale")
+            import traceback
+            self.logger.debug(f"🔍 Traceback: {traceback.format_exc()}")
+            return quantity
+    
+    def round_price(self, symbol_info: Dict, price: float) -> float:
+        """Arrondit un prix selon les règles du symbole"""
+        try:
+            # Récupérer les filtres PRICE_FILTER
+            price_filter = symbol_info['filters'].get('PRICE_FILTER')
+            if not price_filter:
+                # Utiliser la précision de quote si pas de filtre
+                precision = symbol_info.get('quotePrecision', 8)
+                return round(price, precision)
+            
+            tick_size = float(price_filter['tickSize'])
+            
+            if tick_size == 0:
+                return price
+            
+            # Calculer le nombre de décimales dans tick_size
+            tick_str = f"{tick_size:.10f}".rstrip('0')
+            if '.' in tick_str:
+                decimals = len(tick_str.split('.')[1])
+            else:
+                decimals = 0
+            
+            # Arrondir à la tick_size la plus proche
+            rounded = round(price / tick_size) * tick_size
+            return round(rounded, decimals)
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Erreur arrondi prix: {e}, utilisation prix original")
+            return price
+    
+>>>>>>> feature/clean-config
     def _is_cache_valid(self, key: str, ttl_seconds: int) -> bool:
         """Vérifie si le cache est encore valide"""
         if key not in self.cache:
@@ -417,8 +566,127 @@ class DataFetcher:
             raise
     
     async def place_order(self, symbol: str, side: str, order_type: str, quantity: float, price: Optional[float] = None, **kwargs) -> Dict:
+<<<<<<< HEAD
         """Place un ordre sur Binance"""
         try:
+=======
+        """Place un ordre sur Binance avec gestion de la précision"""
+        try:
+            # Version simplifiée : récupérer directement la précision depuis Binance
+            try:
+                # Utiliser les informations d'échange Binance directement
+                if self.binance_client:
+                    exchange_info = self.binance_client.get_exchange_info()
+                    
+                    # Trouver le symbole
+                    symbol_info = None
+                    for s in exchange_info['symbols']:
+                        if s['symbol'] == symbol:
+                            symbol_info = s
+                            break
+                    
+                    if symbol_info:
+                        # Extraire les informations de précision
+                        lot_size_filter = None
+                        for filter_info in symbol_info['filters']:
+                            if filter_info['filterType'] == 'LOT_SIZE':
+                                lot_size_filter = filter_info
+                                break
+                        
+                        if lot_size_filter:
+                            step_size = float(lot_size_filter['stepSize'])
+                            min_qty = float(lot_size_filter['minQty'])
+                            
+                            # Calculer les décimales depuis step_size
+                            if step_size == 1:
+                                decimals = 0
+                            elif step_size == 0.1:
+                                decimals = 1
+                            elif step_size == 0.01:
+                                decimals = 2
+                            elif step_size == 0.001:
+                                decimals = 3
+                            elif step_size == 0.0001:
+                                decimals = 4
+                            elif step_size == 0.00001:
+                                decimals = 5
+                            elif step_size == 0.000001:
+                                decimals = 6
+                            else:
+                                # Méthode générale pour calculer les décimales
+                                step_str = f"{step_size:.10f}".rstrip('0')
+                                decimals = len(step_str.split('.')[1]) if '.' in step_str else 0
+                            
+                            # Arrondir la quantité
+                            rounded_quantity = round(quantity, decimals)
+                            
+                            # Vérifier quantité minimum
+                            if rounded_quantity < min_qty:
+                                rounded_quantity = min_qty
+                            
+                            self.logger.info(f"📏 Précision {symbol}: {quantity} -> {rounded_quantity} (decimals: {decimals}, stepSize: {step_size})")
+                            quantity = rounded_quantity
+                        else:
+                            # Pas de filtre LOT_SIZE, utiliser précision par défaut
+                            precision = symbol_info.get('baseAssetPrecision', 6)
+                            quantity = round(quantity, precision)
+                            self.logger.info(f"📏 Précision par défaut {symbol}: {quantity} (precision: {precision})")
+                    else:
+                        self.logger.warning(f"⚠️ Symbole {symbol} non trouvé dans exchange_info")
+                else:
+                    self.logger.warning(f"⚠️ Client Binance non disponible pour précision")
+                    
+            except Exception as e:
+                self.logger.warning(f"⚠️ Erreur récupération précision {symbol}: {e}")
+            
+            # Arrondir le prix si fourni
+            if price is not None:
+                # Appliquer la même logique de précision pour le prix
+                if symbol_info:
+                    # Récupérer les filtres PRICE_FILTER
+                    price_filter = None
+                    for filter_info in symbol_info['filters']:
+                        if filter_info['filterType'] == 'PRICE_FILTER':
+                            price_filter = filter_info
+                            break
+                    
+                    if price_filter:
+                        tick_size = float(price_filter['tickSize'])
+                        
+                        if tick_size > 0:
+                            # Calculer les décimales depuis tick_size
+                            if tick_size == 1:
+                                decimals = 0
+                            elif tick_size == 0.1:
+                                decimals = 1
+                            elif tick_size == 0.01:
+                                decimals = 2
+                            elif tick_size == 0.001:
+                                decimals = 3
+                            elif tick_size == 0.0001:
+                                decimals = 4
+                            elif tick_size == 0.00001:
+                                decimals = 5
+                            elif tick_size == 0.000001:
+                                decimals = 6
+                            else:
+                                # Méthode générale
+                                tick_str = f"{tick_size:.10f}".rstrip('0')
+                                decimals = len(tick_str.split('.')[1]) if '.' in tick_str else 0
+                            
+                            # Arrondir le prix à la tick_size
+                            price = round(price / tick_size) * tick_size
+                            price = round(price, decimals)
+                            
+                            self.logger.info(f"📏 Prix arrondi {symbol}: {price} (tickSize: {tick_size}, decimals: {decimals})")
+                        else:
+                            price = round(price, 8)
+                    else:
+                        price = round(price, 8)
+                else:
+                    price = round(price, 8)
+            
+>>>>>>> feature/clean-config
             if self.binance_client:
                 if order_type.upper() == 'MARKET':
                     if side.upper() == 'BUY':
@@ -488,6 +756,7 @@ class DataFetcher:
             self.logger.error(f"❌ Erreur placement ordre {symbol}: {e}")
             raise
     
+<<<<<<< HEAD
     async def place_oco_order(self, symbol: str, side: str, quantity: float, price: float, stopPrice: float, stopLimitPrice: float) -> Dict:
         """Place un ordre OCO (One-Cancels-Other) sur Binance"""
         try:
@@ -624,6 +893,8 @@ class DataFetcher:
             self.logger.error(f"❌ Erreur récupération ordres {symbol}: {e}")
             return []
     
+=======
+>>>>>>> feature/clean-config
     async def cancel_order(self, symbol: str, order_id: str) -> Dict:
         """Annule un ordre"""
         try:
