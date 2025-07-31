@@ -56,6 +56,10 @@ class RSIScalpingBot:
         self.config = TradingConfig()
         self.api_config = APIConfig()
         
+        # Import pour RiskManagementConfig
+        from config import RiskManagementConfig
+        self.risk_config = RiskManagementConfig()
+        
         # État du bot
         self.is_running = False
         self.last_trade_time = {}  # Dernier trade par paire
@@ -77,6 +81,122 @@ class RSIScalpingBot:
         self.trade_executor = None
         
         self.logger.info("🚀 RSI Scalping Pro Bot initialisé")
+    
+    async def save_state_to_firebase(self):
+        """Sauvegarde l'état du bot dans Firebase"""
+        try:
+            if not self.firebase_logger or not self.firebase_logger.db:
+                return
+            
+            state_data = {
+                'last_trade_time': {pair: timestamp.isoformat() for pair, timestamp in self.last_trade_time.items()},
+                'consecutive_losses': self.consecutive_losses,
+                'loss_streak_pause_until': self.loss_streak_pause_until.isoformat() if self.loss_streak_pause_until else None,
+                'daily_pnl': self.daily_pnl,
+                'trades_today': self.trades_today,
+                'trades_this_hour': self.trades_this_hour,
+                'last_hour_reset': self.last_hour_reset,
+                'open_positions': {
+                    pair: {
+                        'entry_price': pos['entry_price'],
+                        'quantity': pos['quantity'],
+                        'take_profit': pos['take_profit'],
+                        'stop_loss': pos['stop_loss'],
+                        'entry_time': pos['entry_time'].isoformat(),
+                        'position_value': pos['position_value'],
+                        'analysis_data': pos['analysis_data']
+                    } for pair, pos in self.open_positions.items()
+                },
+                'saved_at': datetime.now().isoformat(),
+                'bot_version': 'v2.1',
+                'server_info': {
+                    'uptime_seconds': time.time(),
+                    'capital_usdc': await self.get_current_capital()
+                }
+            }
+            
+            # Sauvegarde dans Firebase avec ID basé sur la date (méthode synchrone)
+            doc_id = f"bot_state_{datetime.now().strftime('%Y%m%d')}"
+            self.firebase_logger.db.collection('bot_state').document(doc_id).set(state_data)
+            
+            # Garde également une sauvegarde "current" pour l'accès rapide
+            self.firebase_logger.db.collection('bot_state').document('current').set(state_data)
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Impossible de sauvegarder l'état Firebase: {e}")
+    
+    async def load_state_from_firebase(self):
+        """Charge l'état du bot depuis Firebase"""
+        try:
+            if not self.firebase_logger or not self.firebase_logger.db:
+                self.logger.info("📁 Firebase non disponible - Démarrage à zéro")
+                return
+            
+            # Charger l'état actuel (DocumentSnapshot n'est pas awaitable dans Firestore)
+            doc_ref = self.firebase_logger.db.collection('bot_state').document('current')
+            doc = doc_ref.get()  # Pas de await ici
+            
+            if not doc.exists:
+                self.logger.info("📁 Aucun état sauvegardé trouvé dans Firebase - Démarrage à zéro")
+                return
+            
+            state_data = doc.to_dict()
+            
+            # Vérifier si l'état n'est pas trop ancien (max 24h)
+            saved_at = datetime.fromisoformat(state_data['saved_at'])
+            if (datetime.now() - saved_at).total_seconds() > 86400:  # 24h
+                self.logger.warning("⚠️ État Firebase trop ancien (>24h) - Ignoré")
+                return
+            
+            # Restaurer les données
+            self.consecutive_losses = state_data.get('consecutive_losses', 0)
+            self.daily_pnl = state_data.get('daily_pnl', 0.0)
+            self.trades_today = state_data.get('trades_today', 0)
+            self.trades_this_hour = state_data.get('trades_this_hour', 0)
+            self.last_hour_reset = state_data.get('last_hour_reset', datetime.now().hour)
+            
+            # Restaurer loss_streak_pause_until
+            if state_data.get('loss_streak_pause_until'):
+                self.loss_streak_pause_until = datetime.fromisoformat(state_data['loss_streak_pause_until'])
+            
+            # Restaurer last_trade_time
+            for pair, timestamp_str in state_data.get('last_trade_time', {}).items():
+                self.last_trade_time[pair] = datetime.fromisoformat(timestamp_str)
+            
+            # Restaurer open_positions
+            for pair, pos_data in state_data.get('open_positions', {}).items():
+                self.open_positions[pair] = {
+                    'entry_price': pos_data['entry_price'],
+                    'quantity': pos_data['quantity'],
+                    'take_profit': pos_data['take_profit'],
+                    'stop_loss': pos_data['stop_loss'],
+                    'entry_time': datetime.fromisoformat(pos_data['entry_time']),
+                    'position_value': pos_data['position_value'],
+                    'analysis_data': pos_data['analysis_data']
+                }
+            
+            # Log de restauration avec détails
+            server_info = state_data.get('server_info', {})
+            capital = server_info.get('capital_usdc', 0)
+            
+            self.logger.info(f"✅ État restauré depuis Firebase:")
+            self.logger.info(f"   📊 {len(self.open_positions)} positions ouvertes")
+            self.logger.info(f"   💰 Capital: {capital:.2f} USDC")
+            self.logger.info(f"   📈 P&L quotidien: {self.daily_pnl:+.2f} USDC")
+            self.logger.info(f"   🎯 Trades aujourd'hui: {self.trades_today}")
+            self.logger.info(f"   ⚠️ Pertes consécutives: {self.consecutive_losses}")
+            
+        except Exception as e:
+            self.logger.warning(f"⚠️ Impossible de charger l'état Firebase: {e}")
+    
+    async def save_state(self):
+        """Alias pour la compatibilité - utilise Firebase maintenant"""
+        await self.save_state_to_firebase()
+    
+    def load_state(self):
+        """Wrapper synchrone pour l'initialisation"""
+        # Cette méthode sera appelée de manière asynchrone dans initialize_modules
+        pass
     
     def setup_logging(self):
         """Configuration du système de logging"""
@@ -113,10 +233,13 @@ class RSIScalpingBot:
             # Indicateurs techniques
             self.indicators = TechnicalIndicators(self.config)
             
-            # Firebase Logger
+            # Firebase Logger (AVANT de charger l'état)
             if self.api_config.FIREBASE_CREDENTIALS:
                 self.firebase_logger = FirebaseLogger(self.api_config.FIREBASE_CREDENTIALS)
                 await self.firebase_logger.initialize()
+                
+                # Charger l'état sauvegardé APRÈS Firebase
+                await self.load_state_from_firebase()
             
             # Telegram Notifier
             notification_config = NotificationConfig(
@@ -143,6 +266,7 @@ class RSIScalpingBot:
             self.trade_executor = TradeExecutor(
                 data_fetcher=self.data_fetcher,
                 config=self.config,
+                risk_config=self.risk_config,
                 firebase_logger=self.firebase_logger,
                 telegram_notifier=self.telegram_notifier
             )
@@ -557,9 +681,9 @@ class RSIScalpingBot:
                 self.open_positions[pair] = {
                     'entry_price': trade_result.entry_price,
                     'quantity': trade_result.quantity,
-                    'take_profit': trade_result.take_profit_price,
-                    'stop_loss': trade_result.stop_loss_price,
-                    'entry_time': trade_result.entry_time,
+                    'take_profit': trade_result.take_profit,
+                    'stop_loss': trade_result.stop_loss,
+                    'entry_time': trade_result.timestamp,
                     'position_value': trade_result.capital_engaged,
                     'analysis_data': analysis_data
                 }
@@ -571,6 +695,10 @@ class RSIScalpingBot:
                 
                 # Log simple dans main.py
                 self.logger.info(f"✅ Trade {pair} enregistré dans les positions ouvertes")
+                
+                # Sauvegarde de l'état après chaque trade
+                await self.save_state()
+                
                 return True
             
             return False
@@ -582,58 +710,103 @@ class RSIScalpingBot:
     async def monitor_positions(self):
         """Surveillance des positions ouvertes"""
         try:
-            positions_to_close = []
+            positions_to_remove = []
             
-            for pair, position in self.open_positions.items():
-                # Récupération du prix actuel
+            for pair, position in list(self.open_positions.items()):
+                # 1. VÉRIFICATION D'ABORD si la position existe encore sur Binance
+                try:
+                    # Récupérer les positions ouvertes depuis Binance
+                    account_info = await self.data_fetcher.get_account_balance()
+                    symbol_without_usdc = pair.replace('USDC', '')
+                    
+                    # Vérifier si on a encore du balance de cette crypto
+                    has_balance = False
+                    if symbol_without_usdc in account_info:
+                        balance = float(account_info[symbol_without_usdc]['free'])
+                        locked = float(account_info[symbol_without_usdc]['locked'])
+                        total_balance = balance + locked
+                        
+                        # Si le balance est très proche de la quantité de la position
+                        if abs(total_balance - position['quantity']) < 0.001:
+                            has_balance = True
+                    
+                    # Si plus de balance, la position a été fermée automatiquement
+                    if not has_balance:
+                        self.logger.info(f"🔄 Position {pair} fermée automatiquement par TP/SL sur Binance")
+                        positions_to_remove.append(pair)
+                        continue
+                        
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Impossible de vérifier le statut Binance pour {pair}: {e}")
+                
+                # 2. Récupération du prix actuel pour monitoring manuel
                 ticker = await self.data_fetcher.get_ticker(pair)
                 if not ticker:
                     continue
                 
-                current_price = float(ticker['price'])
+                current_price = float(ticker['lastPrice'])
                 entry_price = position['entry_price']
                 pnl_percent = (current_price - entry_price) / entry_price * 100
                 
-                # Vérification timeout adaptatif
+                # Log du statut de la position toutes les 5 minutes
                 time_in_position = (datetime.now() - position['entry_time']).total_seconds() / 60
+                if int(time_in_position) % 5 == 0:  # Log toutes les 5 minutes
+                    self.logger.info(f"📊 {pair}: Prix {current_price:.4f} | P&L: {pnl_percent:+.2f}% | Temps: {time_in_position:.0f}min")
+                
+                # 3. Vérifications de sortie manuelle (en plus des TP/SL automatiques)
                 should_close = False
                 close_reason = ""
                 
-                # Timeout si stagne dans [-0.1%, +0.2%]
-                if time_in_position > 3 and -0.1 <= pnl_percent <= 0.2:
+                # Timeout si stagne dans [-0.1%, +0.2%] après 10 minutes
+                if time_in_position > 10 and -0.1 <= pnl_percent <= 0.2:
                     should_close = True
-                    close_reason = "Timeout stagnation"
+                    close_reason = "Timeout stagnation (10min)"
                 
-                # Sortie anticipée si momentum faible
-                elif time_in_position > 3:
-                    # Récupération données pour vérifier momentum
-                    klines = await self.data_fetcher.get_klines(pair, "1m", limit=20)
-                    if klines:
-                        df = pd.DataFrame(klines, columns=[
-                            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                            'close_time', 'quote_volume', 'trades', 'taker_buy_volume',
-                            'taker_buy_quote_volume', 'ignore'
-                        ])
-                        df['close'] = pd.to_numeric(df['close'])
-                        
-                        # Vérification RSI et MACD
-                        rsi = self.indicators.calculate_rsi(df['close'], period=14)
-                        macd_data = self.indicators.calculate_macd(df['close'])
-                        
-                        if (rsi.iloc[-1] < 35 or 
-                            macd_data['macd'].iloc[-1] < macd_data['signal'].iloc[-1]):
-                            should_close = True
-                            close_reason = "Momentum faible"
+                # Sortie anticipée si momentum très faible après 5 minutes
+                elif time_in_position > 5:
+                    try:
+                        # Récupération données pour vérifier momentum
+                        klines = await self.data_fetcher.get_klines(pair, "1m", limit=20)
+                        if klines:
+                            df = pd.DataFrame(klines, columns=[
+                                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                                'close_time', 'quote_volume', 'trades', 'taker_buy_volume',
+                                'taker_buy_quote_volume', 'ignore'
+                            ])
+                            df['close'] = pd.to_numeric(df['close'])
+                            
+                            # Vérification RSI et MACD
+                            rsi = self.indicators.calculate_rsi(df['close'], period=14)
+                            macd_data = self.indicators.calculate_macd(df['close'])
+                            
+                            # Conditions de sortie très strictes
+                            if (rsi.iloc[-1] < 25 and 
+                                macd_data['macd'].iloc[-1] < macd_data['signal'].iloc[-1] and
+                                pnl_percent < -0.2):  # Et en perte
+                                should_close = True
+                                close_reason = "Momentum très faible + perte"
+                    except Exception as e:
+                        self.logger.warning(f"⚠️ Erreur analyse momentum {pair}: {e}")
                 
+                # Exécuter la sortie manuelle si nécessaire
                 if should_close:
-                    positions_to_close.append((pair, close_reason))
+                    self.logger.info(f"🚨 Fermeture manuelle {pair}: {close_reason}")
+                    await self.close_position(pair, close_reason)
             
-            # Fermeture des positions identifiées
-            for pair, reason in positions_to_close:
-                await self.close_position(pair, reason)
+            # Supprimer les positions fermées automatiquement
+            for pair in positions_to_remove:
+                if pair in self.open_positions:
+                    del self.open_positions[pair]
+                    self.logger.info(f"🗑️ Position {pair} supprimée de la liste locale")
+            
+            # Sauvegarder l'état si des positions ont été supprimées
+            if positions_to_remove:
+                await self.save_state()
                 
         except Exception as e:
             self.logger.error(f"❌ Erreur surveillance positions: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     async def close_position(self, pair: str, reason: str = "Manuel"):
         """Ferme une position"""
@@ -668,6 +841,9 @@ class RSIScalpingBot:
                 # Suppression de la position
                 del self.open_positions[pair]
                 
+                # Sauvegarde de l'état après fermeture
+                await self.save_state()
+                
                 # Log simple dans main.py
                 self.logger.info(f"✅ Position {pair} fermée | P&L: {pnl_amount:+.2f} USDC ({pnl_percent:+.2f}%) | Raison: {reason}")
                 
@@ -685,8 +861,24 @@ class RSIScalpingBot:
         
         while self.is_running:
             try:
+                # Log de debug périodique (toutes les 20 boucles = ~13 minutes)
+                if hasattr(self, 'loop_counter'):
+                    self.loop_counter += 1
+                else:
+                    self.loop_counter = 1
+                
+                if self.loop_counter % 20 == 0:
+                    self.logger.info(f"🔄 Boucle #{self.loop_counter} - Positions ouvertes: {len(self.open_positions)} - Capital: {await self.get_current_capital():.2f} USDC")
+                    # Sauvegarde périodique de l'état
+                    await self.save_state()
+                
                 # Vérification des conditions de trading
                 if not await self.check_trading_conditions():
+                    # Log pourquoi on ne peut pas trader
+                    if len(self.open_positions) >= self.config.MAX_OPEN_POSITIONS:
+                        if self.loop_counter % 10 == 0:  # Log moins fréquent
+                            self.logger.info(f"⏸️ Max positions atteint ({len(self.open_positions)}/{self.config.MAX_OPEN_POSITIONS})")
+                    
                     await asyncio.sleep(40)  # Scan toutes les 40 secondes
                     continue
                 
@@ -745,6 +937,9 @@ class RSIScalpingBot:
         """Arrêt propre du bot"""
         self.logger.info("🛑 Arrêt du bot en cours...")
         self.is_running = False
+        
+        # Sauvegarde finale de l'état
+        await self.save_state()
         
         # Fermeture de toutes les positions ouvertes
         for pair in list(self.open_positions.keys()):
