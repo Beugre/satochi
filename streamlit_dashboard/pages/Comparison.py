@@ -18,7 +18,7 @@ import json
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 try:
-    from firebase_logger import FirebaseLogger
+    from firebase_config import StreamlitFirebaseConfig
     from config import APIConfig
 except ImportError as e:
     st.error(f"❌ Erreur import: {e}")
@@ -29,17 +29,14 @@ class BinanceFirebaseComparison:
     """Classe pour comparer les données Binance/Firebase"""
     
     def __init__(self):
-        self.firebase_logger = None
+        self.firebase_config = None
         self.setup_firebase()
         
     def setup_firebase(self):
         """Configuration Firebase"""
         try:
-            self.firebase_logger = FirebaseLogger()
-            if hasattr(self.firebase_logger, 'db') and self.firebase_logger.db:
-                st.success("🔥 Firebase connecté avec succès")
-            else:
-                st.error("❌ Erreur connexion Firebase")
+            self.firebase_config = StreamlitFirebaseConfig()
+            st.success("🔥 Firebase connecté avec succès")
         except Exception as e:
             st.error(f"❌ Erreur Firebase: {e}")
     

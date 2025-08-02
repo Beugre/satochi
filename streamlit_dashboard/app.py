@@ -31,7 +31,7 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 try:
     from config import TradingConfig, APIConfig
-    from firebase_logger import FirebaseLogger
+    from firebase_config import StreamlitFirebaseConfig
 except ImportError as e:
     st.error(f"❌ Erreur import modules: {e}")
     st.stop()
@@ -42,69 +42,22 @@ class SatochiDashboard:
     def __init__(self):
         self.config = TradingConfig()
         self.api_config = APIConfig()
-        self.firebase_logger = None
-        self.data_fetcher = None
+        self.firebase_config = None
         self.db = None
         
         # Initialisation des connexions
         self._init_connections()
-        self._init_firebase_db()
-    
-    def _init_firebase_db(self):
-        """Initialise la connexion Firebase DB"""
-        try:
-            if self.firebase_logger and hasattr(self.firebase_logger, 'db'):
-                self.db = self.firebase_logger.db
-            elif self.firebase_logger:
-                # Essayer d'initialiser de manière synchrone
-                import asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.firebase_logger.initialize())
-                self.db = self.firebase_logger.db
-                loop.close()
-        except Exception as e:
-            st.warning(f"⚠️ Firebase DB non initialisé: {e}")
-            self.db = None
     
     def _init_connections(self):
-        """Initialise les connexions Firebase et API"""
+        """Initialise les connexions Firebase"""
         try:
-            # Firebase - Utiliser les secrets Streamlit
-            firebase_credentials = st.secrets.get("FIREBASE_CREDENTIALS", None)
-            if firebase_credentials:
-                # Créer un fichier temporaire avec les credentials
-                import tempfile
-                import json
-                
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                    if isinstance(firebase_credentials, str):
-                        # Si c'est une chaîne JSON
-                        f.write(firebase_credentials)
-                    else:
-                        # Si c'est déjà un dict
-                        json.dump(firebase_credentials, f)
-                    temp_path = f.name
-                
-                self.firebase_logger = FirebaseLogger(temp_path)
-                # Initialiser Firebase de manière asynchrone
-                asyncio.create_task(self.firebase_logger.initialize())
-                
-                # Récupérer la référence db après initialisation
-                self.db = None
-                if hasattr(self.firebase_logger, 'db'):
-                    self.db = self.firebase_logger.db
-            else:
-                st.warning("⚠️ Credentials Firebase non trouvés dans les secrets")
-                self.firebase_logger = None
-                self.db = None
-            
-            # Pas besoin de Data Fetcher pour Streamlit - on lit juste Firebase
-            self.data_fetcher = None
+            # Utiliser la configuration Firebase existante qui fonctionne
+            self.firebase_config = StreamlitFirebaseConfig()
+            self.db = self.firebase_config.db
             
         except Exception as e:
             st.error(f"❌ Erreur initialisation connexions: {e}")
-            self.firebase_logger = None
+            self.firebase_config = None
             self.db = None
     
     def run(self):
@@ -180,44 +133,20 @@ class SatochiDashboard:
     def _get_bot_status(self):
         """Récupère le statut du bot depuis Firebase"""
         try:
-            if not self.db:
+            if not self.firebase_config:
                 return {'is_running': False, 'uptime': "N/A", 'last_update': None}
             
-            # Récupérer le health check du binance live service
-            health_doc = self.db.collection('rsi_scalping_logs').order_by('timestamp', direction='desc').limit(1).get()
+            # Utiliser la méthode existante de firebase_config
+            health_data = self.firebase_config.get_bot_health()
             
-            if health_doc:
-                for doc in health_doc:
-                    health_data = doc.to_dict()
-                    last_update = health_data.get('timestamp')
-                    if last_update:
-                        # Gérer différents formats de timestamp
-                        if isinstance(last_update, str):
-                            try:
-                                if last_update.endswith('Z'):
-                                    last_update_dt = datetime.fromisoformat(last_update.replace('Z', '+00:00'))
-                                else:
-                                    last_update_dt = datetime.fromisoformat(last_update)
-                            except:
-                                last_update_dt = datetime.now() - timedelta(hours=1)
-                        else:
-                            # Timestamp Firestore
-                            last_update_dt = last_update.replace(tzinfo=None)
-                        
-                        uptime_seconds = (datetime.now() - last_update_dt).total_seconds()
-                        
-                        if uptime_seconds < 300:  # Moins de 5 minutes = actif
-                            hours = int(uptime_seconds // 3600)
-                            minutes = int((uptime_seconds % 3600) // 60)
-                            uptime = f"{hours}h {minutes}m"
-                            
-                            return {
-                                'is_running': True,
-                                'uptime': uptime,
-                                'last_update': last_update_dt,
-                                'cycle_count': health_data.get('cycle_count', 0),
-                                'monitored_pairs': health_data.get('monitored_pairs_count', 0)
-                            }
+            if health_data.get('is_running', False):
+                return {
+                    'is_running': True,
+                    'uptime': health_data.get('uptime', '0h 0m'),
+                    'last_update': health_data.get('last_update'),
+                    'cycle_count': health_data.get('cycle_count', 0),
+                    'monitored_pairs': health_data.get('monitored_pairs', 0)
+                }
             
             return {'is_running': False, 'uptime': "0", 'last_update': None}
             
@@ -289,55 +218,59 @@ class SatochiDashboard:
     def _get_daily_stats(self):
         """Récupère les statistiques quotidiennes depuis Firebase"""
         try:
-            if not self.db:
+            if not self.firebase_config:
                 return self._get_default_stats()
             
-            # Date d'aujourd'hui
+            # Utiliser les méthodes existantes de firebase_config
+            trades_data = self.firebase_config.get_trades_data(limit=50)
+            positions_data = self.firebase_config.get_positions_data()
+            
+            # Filtrer les trades d'aujourd'hui
             today = datetime.now().strftime('%Y-%m-%d')
+            today_trades = []
             
-            # Récupérer les trades d'aujourd'hui depuis rsi_scalping_trades
-            trades_query = self.db.collection('rsi_scalping_trades').where('date', '==', today).get()
-            trades = [doc.to_dict() for doc in trades_query]
+            for trade in trades_data:
+                # Vérifier différents champs de date
+                trade_date = None
+                for date_field in ['date', 'timestamp', 'entry_time']:
+                    if date_field in trade and trade[date_field]:
+                        try:
+                            if isinstance(trade[date_field], str):
+                                if trade[date_field].startswith(today):
+                                    trade_date = today
+                                    break
+                                # Essayer de parser la date ISO
+                                try:
+                                    parsed_date = datetime.fromisoformat(trade[date_field].replace('Z', '+00:00'))
+                                    if parsed_date.strftime('%Y-%m-%d') == today:
+                                        trade_date = today
+                                        break
+                                except:
+                                    pass
+                        except:
+                            pass
+                
+                if trade_date == today:
+                    today_trades.append(trade)
             
-            # Calculer P&L et statistiques
+            # Calculer les statistiques
             daily_pnl = 0
             winning_trades = 0
-            total_trades = len(trades)
+            total_trades = len(today_trades)
             
-            for trade in trades:
-                pnl = trade.get('pnl_usdc', 0)
-                daily_pnl += pnl
-                if pnl > 0:
-                    winning_trades += 1
+            for trade in today_trades:
+                pnl = trade.get('pnl_usdc', trade.get('pnl', 0))
+                if isinstance(pnl, (int, float)):
+                    daily_pnl += pnl
+                    if pnl > 0:
+                        winning_trades += 1
             
             winrate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
             
-            # Récupérer les statistiques quotidiennes si elles existent
-            daily_stats_doc = self.db.collection('rsi_scalping_daily_stats').document(today).get()
-            if daily_stats_doc.exists:
-                stats_data = daily_stats_doc.to_dict()
-                total_capital = stats_data.get('total_capital', 1000)
-                daily_pnl_percent = (daily_pnl / total_capital * 100) if total_capital > 0 else 0
-            else:
-                total_capital = 1000  # Valeur par défaut
-                daily_pnl_percent = 0
-            
-            # Récupérer positions actives depuis les logs récents
-            recent_logs = self.db.collection('rsi_scalping_logs').order_by('timestamp', direction='desc').limit(10).get()
-            active_positions = 0
-            for doc in recent_logs:
-                log_data = doc.to_dict()
-                message = log_data.get('message', '')
-                if 'Positions ouvertes:' in message:
-                    try:
-                        # Extraire le nombre de positions du message
-                        import re
-                        match = re.search(r'Positions ouvertes: (\d+)', message)
-                        if match:
-                            active_positions = int(match.group(1))
-                            break
-                    except:
-                        pass
+            # Capital et positions
+            total_capital = 1000  # Valeur par défaut
+            active_positions = len(positions_data)
+            daily_pnl_percent = (daily_pnl / total_capital * 100) if total_capital > 0 else 0
             
             return {
                 'daily_pnl': round(daily_pnl, 2),
@@ -365,12 +298,59 @@ class SatochiDashboard:
         st.subheader("📈 P&L Évolution")
         
         try:
-            # Données simulées - à remplacer par Firebase
-            dates = pd.date_range(start='2024-01-01', periods=30, freq='D')
+            if not self.firebase_config:
+                st.warning("⚠️ Firebase non connecté")
+                return
+            
+            # Récupérer les vraies données de trades
+            trades_data = self.firebase_config.get_trades_data(limit=100)
+            
+            if not trades_data:
+                st.info("📭 Aucun trade trouvé pour le graphique")
+                return
+            
+            # Organiser les données par date
+            daily_pnl = {}
+            for trade in trades_data:
+                pnl = trade.get('pnl_usdc', trade.get('pnl', 0))
+                if not isinstance(pnl, (int, float)):
+                    continue
+                    
+                # Extraire la date du trade
+                trade_date = None
+                for date_field in ['date', 'timestamp', 'entry_time']:
+                    if date_field in trade and trade[date_field]:
+                        try:
+                            if isinstance(trade[date_field], str):
+                                # Parser la date ISO
+                                parsed_date = datetime.fromisoformat(trade[date_field].replace('Z', '+00:00'))
+                                trade_date = parsed_date.strftime('%Y-%m-%d')
+                                break
+                        except:
+                            pass
+                
+                if trade_date:
+                    if trade_date not in daily_pnl:
+                        daily_pnl[trade_date] = 0
+                    daily_pnl[trade_date] += pnl
+            
+            if not daily_pnl:
+                st.info("📭 Aucune donnée P&L trouvée")
+                return
+            
+            # Convertir en DataFrame et calculer P&L cumulé
+            dates = sorted(daily_pnl.keys())
+            daily_values = [daily_pnl[date] for date in dates]
+            cumul_values = []
+            cumul = 0
+            for val in daily_values:
+                cumul += val
+                cumul_values.append(cumul)
+            
             pnl_data = pd.DataFrame({
-                'date': dates,
-                'pnl_cumul': [i * 2.5 + (i % 3 - 1) * 10 for i in range(30)],
-                'daily_pnl': [(i % 3 - 1) * 15 + 5 for i in range(30)]
+                'date': pd.to_datetime(dates),
+                'pnl_cumul': cumul_values,
+                'daily_pnl': daily_values
             })
             
             fig = make_subplots(
@@ -420,21 +400,42 @@ class SatochiDashboard:
         st.subheader("🎯 Répartition Positions")
         
         try:
-            # Données simulées
-            positions_data = {
-                'Paire': ['BTCUSDC', 'ETHUSDC', 'ADAUSDC'],
-                'P&L': [25.4, -12.1, 8.7],
-                'Duration': ['1h 23m', '45m', '2h 12m']
-            }
+            if not self.firebase_config:
+                st.warning("⚠️ Firebase non connecté")
+                return
             
-            df = pd.DataFrame(positions_data)
+            # Récupérer les vraies données de positions
+            positions_data = self.firebase_config.get_positions_data()
+            
+            if not positions_data:
+                st.info("📭 Aucune position active pour l'aperçu")
+                return
+            
+            # Organiser les données pour le graphique
+            pairs = []
+            pnl_values = []
+            durations = []
+            
+            for position in positions_data:
+                pair = position.get('pair', position.get('symbol', 'N/A'))
+                pnl = position.get('pnl_usdc', position.get('unrealized_pnl', 0))
+                duration = position.get('duration', 'N/A')
+                
+                if isinstance(pnl, (int, float)) and pnl != 0:
+                    pairs.append(pair)
+                    pnl_values.append(abs(pnl))  # Valeur absolue pour le graphique
+                    durations.append(duration)
+            
+            if not pairs:
+                st.info("📭 Aucune donnée P&L trouvée pour les positions")
+                return
             
             # Graphique en secteurs
             fig = px.pie(
-                values=[abs(x) for x in df['P&L']],
-                names=df['Paire'],
+                values=pnl_values,
+                names=pairs,
                 title="Exposition par paire",
-                color_discrete_sequence=['#ff6b6b', '#4ecdc4', '#45b7d1']
+                color_discrete_sequence=['#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#6c5ce7', '#fd79a8']
             )
             
             fig.update_layout(
@@ -445,27 +446,48 @@ class SatochiDashboard:
             
             st.plotly_chart(fig, use_container_width=True)
             
-            # Tableau des positions
-            st.dataframe(df, use_container_width=True)
+            # Tableau résumé des positions
+            if len(pairs) > 0:
+                summary_df = pd.DataFrame({
+                    'Paire': pairs,
+                    'P&L': [position.get('pnl_usdc', position.get('unrealized_pnl', 0)) for position in positions_data[:len(pairs)]],
+                    'Duration': durations
+                })
+                st.dataframe(summary_df, use_container_width=True)
             
         except Exception as e:
-            st.error(f"❌ Erreur positions: {e}")
+            st.error(f"❌ Erreur aperçu positions: {e}")
     
     def _display_active_positions(self):
         """Affiche les positions actives"""
         try:
-            # Données simulées
-            positions = pd.DataFrame({
-                'Paire': ['BTCUSDC', 'ETHUSDC', 'ADAUSDC'],
-                'Entry Price': [45234.56, 2567.89, 0.4523],
-                'Current Price': [45456.78, 2534.12, 0.4562],
-                'Quantity': [0.0044, 0.782, 442.5],
-                'P&L USDC': [25.4, -12.1, 8.7],
-                'P&L %': [0.49, -1.31, 0.86],
-                'Duration': ['1h 23m', '45m', '2h 12m'],
-                'SL': [44123.45, 2456.78, 0.4321],
-                'TP': [46789.12, 2678.90, 0.4789]
-            })
+            if not self.firebase_config:
+                st.warning("⚠️ Firebase non connecté")
+                return
+            
+            # Récupérer les vraies données de positions
+            positions_data = self.firebase_config.get_positions_data()
+            
+            if not positions_data:
+                st.info("📭 Aucune position active")
+                return
+            
+            # Convertir en DataFrame
+            df_data = []
+            for position in positions_data:
+                df_data.append({
+                    'Paire': position.get('pair', position.get('symbol', 'N/A')),
+                    'Entry Price': position.get('entry_price', position.get('price', 0)),
+                    'Current Price': position.get('current_price', position.get('mark_price', 0)),
+                    'Quantity': position.get('quantity', position.get('amount', 0)),
+                    'P&L USDC': position.get('pnl_usdc', position.get('unrealized_pnl', 0)),
+                    'P&L %': position.get('pnl_percent', position.get('pnl_pct', 0)),
+                    'Duration': position.get('duration', 'N/A'),
+                    'SL': position.get('stop_loss', position.get('sl_price', 0)),
+                    'TP': position.get('take_profit', position.get('tp_price', 0))
+                })
+            
+            positions_df = pd.DataFrame(df_data)
             
             # Colorisation des P&L
             def color_pnl(val):
@@ -474,8 +496,7 @@ class SatochiDashboard:
                     return color
                 return ''
             
-            styled_df = positions.style.applymap(color_pnl, subset=['P&L USDC', 'P&L %'])
-            
+            styled_df = positions_df.style.applymap(color_pnl, subset=['P&L USDC', 'P&L %'])
             st.dataframe(styled_df, use_container_width=True)
             
         except Exception as e:
@@ -484,39 +505,50 @@ class SatochiDashboard:
     def _display_recent_trades(self):
         """Affiche les derniers trades"""
         try:
-            # Données simulées
-            trades = pd.DataFrame({
-                'Timestamp': [
-                    '2024-07-27 14:23:45',
-                    '2024-07-27 13:45:12',
-                    '2024-07-27 12:34:56',
-                    '2024-07-27 11:12:34',
-                    '2024-07-27 10:45:23'
-                ],
-                'Paire': ['BTCUSDC', 'ETHUSDC', 'ADAUSDC', 'SOLUSDC', 'MATICUSDC'],
-                'Type': ['SELL', 'SELL', 'BUY', 'SELL', 'BUY'],
-                'Entry': [45123.45, 2567.89, 0.4523, 156.78, 0.8934],
-                'Exit': [45567.89, 2534.12, '-', 159.45, '-'],
-                'P&L USDC': [44.56, -26.77, '-', 26.67, '-'],
-                'P&L %': [0.98, -1.31, '-', 1.70, '-'],
-                'Duration': ['1h 23m', '45m', '-', '2h 45m', '-'],
-                'Exit Reason': ['TP', 'SL', '-', 'TP', '-']
-            })
+            if not self.firebase_config:
+                st.warning("⚠️ Firebase non connecté")
+                return
+            
+            # Récupérer les vraies données de trades
+            trades_data = self.firebase_config.get_trades_data(limit=20)
+            
+            if not trades_data:
+                st.info("📭 Aucun trade trouvé")
+                return
+            
+            # Convertir en DataFrame
+            df_data = []
+            for trade in trades_data:
+                df_data.append({
+                    'Timestamp': trade.get('timestamp', 'N/A'),
+                    'Paire': trade.get('pair', trade.get('symbol', 'N/A')),
+                    'Type': trade.get('side', trade.get('type', 'N/A')),
+                    'Entry': trade.get('entry_price', trade.get('price', 0)),
+                    'Exit': trade.get('exit_price', '-'),
+                    'P&L USDC': trade.get('pnl_usdc', trade.get('pnl', 0)),
+                    'P&L %': trade.get('pnl_percent', trade.get('pnl_pct', 0)),
+                    'Duration': trade.get('duration', '-'),
+                    'Exit Reason': trade.get('exit_reason', trade.get('reason', '-'))
+                })
+            
+            trades_df = pd.DataFrame(df_data)
             
             # Colorisation
             def color_trades(row):
                 if row['Type'] == 'BUY':
                     return ['background-color: rgba(0,255,136,0.1)'] * len(row)
-                elif row['P&L USDC'] != '-':
-                    pnl = float(row['P&L USDC']) if row['P&L USDC'] != '-' else 0
-                    if pnl > 0:
-                        return ['background-color: rgba(0,255,136,0.1)'] * len(row)
-                    else:
-                        return ['background-color: rgba(255,68,68,0.1)'] * len(row)
+                elif row['P&L USDC'] != '-' and row['P&L USDC'] != 0:
+                    try:
+                        pnl = float(row['P&L USDC']) if row['P&L USDC'] != '-' else 0
+                        if pnl > 0:
+                            return ['background-color: rgba(0,255,136,0.1)'] * len(row)
+                        else:
+                            return ['background-color: rgba(255,68,68,0.1)'] * len(row)
+                    except:
+                        pass
                 return [''] * len(row)
             
-            styled_trades = trades.style.apply(color_trades, axis=1)
-            
+            styled_trades = trades_df.style.apply(color_trades, axis=1)
             st.dataframe(styled_trades, use_container_width=True)
             
         except Exception as e:

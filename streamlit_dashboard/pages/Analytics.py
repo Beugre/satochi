@@ -25,7 +25,7 @@ st.set_page_config(
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 try:
-    from firebase_logger import FirebaseLogger
+    from firebase_config import StreamlitFirebaseConfig
     from config import TradingConfig
 except ImportError as e:
     st.error(f"❌ Erreur import modules: {e}")
@@ -35,14 +35,14 @@ class AnalyticsPage:
     """Page d'analyse des performances"""
     
     def __init__(self):
-        self.firebase_logger = None
+        self.firebase_config = None
         self.config = TradingConfig()
         self._init_firebase()
     
     def _init_firebase(self):
         """Initialise la connexion Firebase"""
         try:
-            self.firebase_logger = FirebaseLogger()
+            self.firebase_config = StreamlitFirebaseConfig()
         except Exception as e:
             st.error(f"❌ Erreur connexion Firebase: {e}")
     
