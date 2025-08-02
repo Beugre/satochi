@@ -12,9 +12,10 @@ from plotly.subplots import make_subplots
 import asyncio
 import sys
 import os
+import tempfile
+import json
 from datetime import datetime, timedelta
 from streamlit_autorefresh import st_autorefresh
-import json
 import time
 
 # Configuration de la page
@@ -31,7 +32,6 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 try:
     from config import TradingConfig, APIConfig
     from firebase_logger import FirebaseLogger
-    from data_fetcher import DataFetcher
 except ImportError as e:
     st.error(f"❌ Erreur import modules: {e}")
     st.stop()
@@ -44,25 +44,68 @@ class SatochiDashboard:
         self.api_config = APIConfig()
         self.firebase_logger = None
         self.data_fetcher = None
+        self.db = None
         
         # Initialisation des connexions
         self._init_connections()
+        self._init_firebase_db()
+    
+    def _init_firebase_db(self):
+        """Initialise la connexion Firebase DB"""
+        try:
+            if self.firebase_logger and hasattr(self.firebase_logger, 'db'):
+                self.db = self.firebase_logger.db
+            elif self.firebase_logger:
+                # Essayer d'initialiser de manière synchrone
+                import asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(self.firebase_logger.initialize())
+                self.db = self.firebase_logger.db
+                loop.close()
+        except Exception as e:
+            st.warning(f"⚠️ Firebase DB non initialisé: {e}")
+            self.db = None
     
     def _init_connections(self):
         """Initialise les connexions Firebase et API"""
         try:
-            # Firebase
-            self.firebase_logger = FirebaseLogger()
+            # Firebase - Utiliser les secrets Streamlit
+            firebase_credentials = st.secrets.get("FIREBASE_CREDENTIALS", None)
+            if firebase_credentials:
+                # Créer un fichier temporaire avec les credentials
+                import tempfile
+                import json
+                
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                    if isinstance(firebase_credentials, str):
+                        # Si c'est une chaîne JSON
+                        f.write(firebase_credentials)
+                    else:
+                        # Si c'est déjà un dict
+                        json.dump(firebase_credentials, f)
+                    temp_path = f.name
+                
+                self.firebase_logger = FirebaseLogger(temp_path)
+                # Initialiser Firebase de manière asynchrone
+                asyncio.create_task(self.firebase_logger.initialize())
+                
+                # Récupérer la référence db après initialisation
+                self.db = None
+                if hasattr(self.firebase_logger, 'db'):
+                    self.db = self.firebase_logger.db
+            else:
+                st.warning("⚠️ Credentials Firebase non trouvés dans les secrets")
+                self.firebase_logger = None
+                self.db = None
             
-            # Data Fetcher
-            self.data_fetcher = DataFetcher(
-                api_key=self.api_config.BINANCE_API_KEY,
-                api_secret=self.api_config.BINANCE_SECRET_KEY,
-                testnet=self.api_config.BINANCE_TESTNET
-            )
+            # Pas besoin de Data Fetcher pour Streamlit - on lit juste Firebase
+            self.data_fetcher = None
             
         except Exception as e:
             st.error(f"❌ Erreur initialisation connexions: {e}")
+            self.firebase_logger = None
+            self.db = None
     
     def run(self):
         """Lance l'interface dashboard"""
@@ -137,28 +180,44 @@ class SatochiDashboard:
     def _get_bot_status(self):
         """Récupère le statut du bot depuis Firebase"""
         try:
-            # Récupérer le health check du binance live service
-            health_doc = self.db.collection('binance_live').document('health').get()
+            if not self.db:
+                return {'is_running': False, 'uptime': "N/A", 'last_update': None}
             
-            if health_doc.exists:
-                health_data = health_doc.to_dict()
-                last_update = health_data.get('timestamp')
-                if last_update:
-                    last_update_dt = datetime.fromisoformat(last_update.replace('Z', '+00:00'))
-                    uptime_seconds = (datetime.now() - last_update_dt).total_seconds()
-                    
-                    if uptime_seconds < 300:  # Moins de 5 minutes = actif
-                        hours = int(uptime_seconds // 3600)
-                        minutes = int((uptime_seconds % 3600) // 60)
-                        uptime = f"{hours}h {minutes}m"
+            # Récupérer le health check du binance live service
+            health_doc = self.db.collection('rsi_scalping_logs').order_by('timestamp', direction='desc').limit(1).get()
+            
+            if health_doc:
+                for doc in health_doc:
+                    health_data = doc.to_dict()
+                    last_update = health_data.get('timestamp')
+                    if last_update:
+                        # Gérer différents formats de timestamp
+                        if isinstance(last_update, str):
+                            try:
+                                if last_update.endswith('Z'):
+                                    last_update_dt = datetime.fromisoformat(last_update.replace('Z', '+00:00'))
+                                else:
+                                    last_update_dt = datetime.fromisoformat(last_update)
+                            except:
+                                last_update_dt = datetime.now() - timedelta(hours=1)
+                        else:
+                            # Timestamp Firestore
+                            last_update_dt = last_update.replace(tzinfo=None)
                         
-                        return {
-                            'is_running': True,
-                            'uptime': uptime,
-                            'last_update': last_update_dt,
-                            'cycle_count': health_data.get('cycle_count', 0),
-                            'monitored_pairs': health_data.get('monitored_pairs_count', 0)
-                        }
+                        uptime_seconds = (datetime.now() - last_update_dt).total_seconds()
+                        
+                        if uptime_seconds < 300:  # Moins de 5 minutes = actif
+                            hours = int(uptime_seconds // 3600)
+                            minutes = int((uptime_seconds % 3600) // 60)
+                            uptime = f"{hours}h {minutes}m"
+                            
+                            return {
+                                'is_running': True,
+                                'uptime': uptime,
+                                'last_update': last_update_dt,
+                                'cycle_count': health_data.get('cycle_count', 0),
+                                'monitored_pairs': health_data.get('monitored_pairs_count', 0)
+                            }
             
             return {'is_running': False, 'uptime': "0", 'last_update': None}
             
@@ -200,7 +259,7 @@ class SatochiDashboard:
                 st.metric(
                     label="📊 Trades Aujourd'hui",
                     value=stats['daily_trades'],
-                    delta=f"Max: {self.config.MAX_DAILY_TRADES}"
+                    delta=f"Max: {getattr(self.config, 'MAX_DAILY_TRADES', 20)}"
                 )
             
             with col3:
@@ -214,7 +273,7 @@ class SatochiDashboard:
                 st.metric(
                     label="📈 Positions Actives",
                     value=stats['active_positions'],
-                    delta=f"Max: {self.config.MAX_OPEN_POSITIONS}"
+                    delta=f"Max: {getattr(self.config, 'MAX_OPEN_POSITIONS', 2)}"
                 )
             
             with col5:
@@ -230,57 +289,76 @@ class SatochiDashboard:
     def _get_daily_stats(self):
         """Récupère les statistiques quotidiennes depuis Firebase"""
         try:
-            # Récupérer les données de compte Binance
-            account_doc = self.db.collection('binance_live').document('account_info').get()
-            account_data = account_doc.to_dict() if account_doc.exists else {}
+            if not self.db:
+                return self._get_default_stats()
             
-            # Récupérer les trades récents
-            trades_doc = self.db.collection('binance_live').document('recent_trades').get()
-            trades_data = trades_doc.to_dict() if trades_doc.exists else {}
+            # Date d'aujourd'hui
+            today = datetime.now().strftime('%Y-%m-%d')
             
-            # Calculer les statistiques
-            total_capital = account_data.get('total_value_usdc_approx', 0)
-            daily_trades = len(trades_data.get('trades', []))
+            # Récupérer les trades d'aujourd'hui depuis rsi_scalping_trades
+            trades_query = self.db.collection('rsi_scalping_trades').where('date', '==', today).get()
+            trades = [doc.to_dict() for doc in trades_query]
             
-            # Calculer P&L et winrate depuis les trades
-            trades = trades_data.get('trades', [])
+            # Calculer P&L et statistiques
             daily_pnl = 0
             winning_trades = 0
+            total_trades = len(trades)
             
             for trade in trades:
-                # Calculer approximatif du P&L (simplification)
-                if trade.get('isBuyer'):
-                    # Achat - on considère comme négatif pour le calcul
-                    daily_pnl -= trade.get('quoteQty', 0)
-                else:
-                    # Vente - positif
-                    daily_pnl += trade.get('quoteQty', 0)
-                    if trade.get('quoteQty', 0) > 0:
-                        winning_trades += 1
+                pnl = trade.get('pnl_usdc', 0)
+                daily_pnl += pnl
+                if pnl > 0:
+                    winning_trades += 1
             
-            winrate = (winning_trades / daily_trades * 100) if daily_trades > 0 else 0
-            daily_pnl_percent = (daily_pnl / total_capital * 100) if total_capital > 0 else 0
+            winrate = (winning_trades / total_trades * 100) if total_trades > 0 else 0
             
-            # Récupérer positions ouvertes
-            orders_doc = self.db.collection('binance_live').document('open_orders').get()
-            orders_data = orders_doc.to_dict() if orders_doc.exists else {}
-            active_positions = len(orders_data.get('orders', []))
+            # Récupérer les statistiques quotidiennes si elles existent
+            daily_stats_doc = self.db.collection('rsi_scalping_daily_stats').document(today).get()
+            if daily_stats_doc.exists:
+                stats_data = daily_stats_doc.to_dict()
+                total_capital = stats_data.get('total_capital', 1000)
+                daily_pnl_percent = (daily_pnl / total_capital * 100) if total_capital > 0 else 0
+            else:
+                total_capital = 1000  # Valeur par défaut
+                daily_pnl_percent = 0
+            
+            # Récupérer positions actives depuis les logs récents
+            recent_logs = self.db.collection('rsi_scalping_logs').order_by('timestamp', direction='desc').limit(10).get()
+            active_positions = 0
+            for doc in recent_logs:
+                log_data = doc.to_dict()
+                message = log_data.get('message', '')
+                if 'Positions ouvertes:' in message:
+                    try:
+                        # Extraire le nombre de positions du message
+                        import re
+                        match = re.search(r'Positions ouvertes: (\d+)', message)
+                        if match:
+                            active_positions = int(match.group(1))
+                            break
+                    except:
+                        pass
             
             return {
                 'daily_pnl': round(daily_pnl, 2),
                 'daily_pnl_percent': round(daily_pnl_percent, 2),
-                'daily_trades': daily_trades,
+                'daily_trades': total_trades,
                 'winrate': round(winrate, 1),
                 'active_positions': active_positions,
-                'free_capital': round(total_capital * 0.8, 2),  # Approximation
+                'free_capital': round(total_capital * 0.8, 2),
                 'total_capital': round(total_capital, 2)
             }
+            
         except Exception as e:
             st.error(f"Erreur récupération stats: {e}")
-            return {
-                'daily_pnl': 0, 'daily_pnl_percent': 0, 'daily_trades': 0,
-                'winrate': 0, 'active_positions': 0, 'free_capital': 0, 'total_capital': 0
-            }
+            return self._get_default_stats()
+    
+    def _get_default_stats(self):
+        """Retourne des statistiques par défaut"""
+        return {
+            'daily_pnl': 0, 'daily_pnl_percent': 0, 'daily_trades': 0,
+            'winrate': 0, 'active_positions': 0, 'free_capital': 0, 'total_capital': 1000
+        }
     
     def _display_pnl_chart(self):
         """Affiche le graphique P&L"""
