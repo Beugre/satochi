@@ -41,51 +41,38 @@ class BinanceFirebaseComparison:
             st.error(f"❌ Erreur Firebase: {e}")
     
     def get_binance_live_data(self):
-        """Récupère les données de la collection binance_live"""
+        """Récupère les données Firebase avec les nouvelles collections"""
         try:
-            if not self.firebase_logger or not self.firebase_logger.db:
+            if not self.firebase_config:
                 return None, None, None, None
             
-            # Account info
-            account_doc = self.firebase_logger.db.collection('binance_live').document('account_info').get()
-            account_data = account_doc.to_dict() if account_doc.exists else None
+            # Utiliser les vraies collections du bot
+            trades_data = self.firebase_config.get_trades_data(limit=50)
+            positions_data = self.firebase_config.get_positions_data()
+            health_data = self.firebase_config.get_bot_health()
             
-            # Recent trades
-            trades_doc = self.firebase_logger.db.collection('binance_live').document('recent_trades').get()
-            trades_data = trades_doc.to_dict() if trades_doc.exists else None
+            # Simuler account_data basé sur les trades
+            total_pnl = sum([t.get('pnl_usdc', 0) for t in trades_data if isinstance(t.get('pnl_usdc'), (int, float))])
+            account_data = {
+                'total_value_usdc_approx': 1000 + total_pnl,  # Capital de base + P&L
+                'free_usdc': max(0, 1000 + total_pnl - len(positions_data) * 50),  # Approximation
+                'timestamp': datetime.now().isoformat()
+            }
             
-            # Open orders
-            orders_doc = self.firebase_logger.db.collection('binance_live').document('open_orders').get()
-            orders_data = orders_doc.to_dict() if orders_doc.exists else None
-            
-            # Health status
-            health_doc = self.firebase_logger.db.collection('binance_live').document('health').get()
-            health_data = health_doc.to_dict() if health_doc.exists else None
-            
-            return account_data, trades_data, orders_data, health_data
+            return account_data, trades_data, positions_data, health_data
             
         except Exception as e:
-            st.error(f"❌ Erreur récupération données binance_live: {e}")
+            st.error(f"❌ Erreur récupération données Firebase: {e}")
             return None, None, None, None
     
     def get_bot_trades_data(self):
         """Récupère les données des trades du bot principal"""
         try:
-            if not self.firebase_logger or not self.firebase_logger.db:
+            if not self.firebase_config:
                 return []
             
-            # Récupérer les trades des dernières 24h
-            trades_ref = self.firebase_logger.db.collection('trades')
-            trades_query = trades_ref.order_by('timestamp', direction='DESCENDING').limit(100)
-            trades_docs = trades_query.get()
-            
-            trades_data = []
-            for doc in trades_docs:
-                trade = doc.to_dict()
-                trade['id'] = doc.id
-                trades_data.append(trade)
-            
-            return trades_data
+            # Utiliser la méthode standardisée
+            return self.firebase_config.get_trades_data(limit=100)
             
         except Exception as e:
             st.error(f"❌ Erreur récupération trades bot: {e}")
