@@ -41,8 +41,8 @@ class TradingConfig:
     
     # 💰 GESTION POSITION
     POSITION_SIZE_PERCENT: float = 5.0          # % du capital par position
-    MAX_POSITIONS: int = 2                      # Max positions simultanées
-    MAX_OPEN_POSITIONS: int = 2                 # Alias pour compatibilité (telegram_notifier)
+    MAX_POSITIONS: int = 6                      # Max positions simultanées
+    MAX_OPEN_POSITIONS: int = 6                 # Alias pour compatibilité (telegram_notifier)
     MIN_POSITION_SIZE_USDC: float = 50.0        # Taille min position
     MAX_POSITION_SIZE_USDC: float = 500.0       # Taille max position
 
@@ -53,18 +53,18 @@ class TradingConfig:
     DAILY_TARGET_PERCENT: float = 1.0           # Objectif +1% quotidien
     
     # ⏱️ TIMEOUTS
-    POSITION_TIMEOUT_MINUTES: int = 45          # Timeout position (45min)
+    POSITION_TIMEOUT_MINUTES: int = 60          # Timeout position (45min)
     TIMEOUT_ENABLED: bool = True                # Activation timeout
-    TIMEOUT_MINUTES: int = 45                   # Durée timeout position
+    TIMEOUT_MINUTES: int = 60                   # Durée timeout position
     TIMEOUT_PNL_MIN: float = -0.1               # Seuil PnL min timeout
     TIMEOUT_PNL_MAX: float = 0.2                # Seuil PnL max timeout
     STAGNATION_THRESHOLD_LOW: float = -0.1      # Seuil stagnation bas
     STAGNATION_THRESHOLD_HIGH: float = 0.2      # Seuil stagnation haut
-    STAGNATION_TIME_MINUTES: int = 15           # Temps stagnation max
+    STAGNATION_TIME_MINUTES: int = 45           # Temps stagnation max
     
     # 🚪 SORTIE ANTICIPÉE
     EARLY_EXIT_ENABLED: bool = True             # Sortie anticipée activée
-    EARLY_EXIT_DURATION_MIN: int = 15           # Durée minimum avant sortie anticipée
+    EARLY_EXIT_DURATION_MIN: int = 45           # Durée minimum avant sortie anticipée
     
     # 🚫 ANTI-SURTRADING
     MIN_TIME_BETWEEN_BUYS: int = 300            # 300s entre achats
@@ -90,6 +90,7 @@ class TradingConfig:
     TRAILING_STOP_DISTANCE: float = 0.3         # Distance 0.3%
     TRAILING_START_PERCENT: float = 0.5         # Pourcentage de déclenchement
     TRAILING_STEP_PERCENT: float = 0.1          # Pas de trailing
+    FIXED_STOP_LOSS_ENABLED: bool = True        # Stop Loss fixe initial (protection immédiate)
     
     # ⏰ HORAIRES
     TRADING_HOURS_ENABLED: bool = False         # Horaires de trading
@@ -128,6 +129,10 @@ class TradingConfig:
     MIN_PRICE_USDC: float = 0.00001                        # Prix minimum 0.00001 USDC (évite tokens trop volatils)
     MAX_PRICE_PRECISION: int = 20                           # Précision maximale autorisée (évite erreurs formatage)
     MICRO_PRICE_SYMBOLS: List[str] = field(default_factory=lambda: ["PEPEUSDC", "SHIBUSDC", "FLOKIUSDC"])  # Symboles micro-prix à surveiller
+    
+    # 💸 GESTION MONTANTS MINIMUMS
+    MIN_TRADE_VALUE_USDC: float = 10.0                     # Valeur minimum d'un trade en USDC (évite les micro-restes)
+    DUST_THRESHOLD_USDC: float = 10.0                      # Seuil sous lequel on ignore les montants (dust) - Minimum Binance
 
     def __post_init__(self):
         # Plus besoin de __post_init__ car les listes sont gérées par default_factory

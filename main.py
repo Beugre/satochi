@@ -812,12 +812,16 @@ class RSIScalpingBot:
         """Ferme une position"""
         try:
             if pair not in self.open_positions:
+                self.logger.warning(f"⚠️ Position {pair} non trouvée dans open_positions")
                 return
             
             position = self.open_positions[pair]
+            self.logger.info(f"🔄 Tentative fermeture {pair}, quantité: {position['quantity']}")
             
             # Exécution de l'ordre de vente via trade_executor
             result = await self.trade_executor.execute_sell_order(pair, position['quantity'])
+            
+            self.logger.info(f"📋 Résultat execute_sell_order: {result}")
             
             if result['success']:
                 # Calcul du P&L
@@ -846,9 +850,22 @@ class RSIScalpingBot:
                 
                 # Log simple dans main.py
                 self.logger.info(f"✅ Position {pair} fermée | P&L: {pnl_amount:+.2f} USDC ({pnl_percent:+.2f}%) | Raison: {reason}")
+            else:
+                # Vérifier si c'est une erreur de balance insuffisante (position déjà fermée)
+                error_msg = result.get('error', '')
+                if 'insufficient balance' in error_msg.lower():
+                    self.logger.warning(f"⚠️ Position {pair} introuvable sur Binance (déjà fermée?), suppression locale")
+                    # Suppression de la position locale
+                    del self.open_positions[pair]
+                    await self.save_state()
+                    self.logger.info(f"🗑️ Position {pair} supprimée localement (pas de P&L calculé)")
+                else:
+                    self.logger.error(f"❌ Échec fermeture {pair}: {result.get('error', 'Erreur inconnue')}")
                 
         except Exception as e:
             self.logger.error(f"❌ Erreur fermeture position {pair}: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
     
     async def main_loop(self):
         """Boucle principale du bot"""

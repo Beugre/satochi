@@ -186,7 +186,24 @@ class DataFetcher:
             if rounded < min_qty:
                 rounded = min_qty
             
-            self.logger.info(f"📏 Quantité arrondie: {quantity} -> {rounded} (decimals: {decimals})")
+            # IMPORTANT: Convertir en format décimal standard (pas de notation scientifique)
+            # Binance n'accepte que les nombres au format décimal standard
+            from decimal import Decimal, ROUND_DOWN
+            
+            # Utiliser Decimal pour éviter la notation scientifique
+            if rounded < min_qty:
+                rounded = min_qty
+            
+            # SOLUTION SIMPLE: Forcer le format décimal puis reconvertir en float
+            # Cette méthode évite la notation scientifique
+            if decimals > 0:
+                # Formatage forcé en décimal puis reconversion
+                decimal_str = f"{rounded:.{decimals}f}"
+                rounded = float(decimal_str)
+            else:
+                rounded = float(f"{rounded:.0f}")
+            
+            self.logger.info(f"📏 Quantité arrondie: {quantity} -> {rounded} (decimals: {decimals}, format: {f'{rounded:.{decimals}f}' if decimals > 0 else f'{rounded:.0f}'})")
             return rounded
             
         except Exception as e:
@@ -198,8 +215,31 @@ class DataFetcher:
     def round_price(self, symbol_info: Dict, price: float) -> float:
         """Arrondit un prix selon les règles du symbole"""
         try:
+            # Vérifier que symbol_info est valide
+            if not symbol_info or not isinstance(symbol_info, dict):
+                self.logger.warning(f"⚠️ symbol_info invalide: {type(symbol_info)}")
+                return price
+            
+            # Récupérer et convertir les filtres si nécessaire
+            filters = symbol_info.get('filters', {})
+            
+            # Si filters est une liste (format brut Binance), la convertir en dict
+            if isinstance(filters, list):
+                self.logger.debug(f"🔄 Conversion filters list vers dict")
+                filters_dict = {}
+                for filter_info in filters:
+                    if isinstance(filter_info, dict) and 'filterType' in filter_info:
+                        filters_dict[filter_info['filterType']] = filter_info
+                filters = filters_dict
+            
+            if not isinstance(filters, dict):
+                self.logger.warning(f"⚠️ filters impossible à convertir: {type(filters)}")
+                # Utiliser la précision de quote si pas de filtre
+                precision = symbol_info.get('quotePrecision', 8)
+                return round(price, precision)
+            
             # Récupérer les filtres PRICE_FILTER
-            price_filter = symbol_info['filters'].get('PRICE_FILTER')
+            price_filter = filters.get('PRICE_FILTER')
             if not price_filter:
                 # Utiliser la précision de quote si pas de filtre
                 precision = symbol_info.get('quotePrecision', 8)
@@ -219,7 +259,16 @@ class DataFetcher:
             
             # Arrondir à la tick_size la plus proche
             rounded = round(price / tick_size) * tick_size
-            return round(rounded, decimals)
+            rounded = round(rounded, decimals)
+            
+            # IMPORTANT: Convertir en format décimal standard (pas de notation scientifique)
+            # Binance n'accepte que les nombres au format décimal standard
+            if decimals > 0:
+                rounded = float(f"{rounded:.{decimals}f}")
+            else:
+                rounded = float(f"{rounded:.0f}")
+                
+            return rounded
             
         except Exception as e:
             self.logger.warning(f"⚠️ Erreur arrondi prix: {e}, utilisation prix original")
@@ -636,35 +685,72 @@ class DataFetcher:
             if price is not None:
                 price = round(price, 8)  # Prix généralement 8 décimales max
             
+            # IMPORTANT: Convertir quantity et price en format décimal (pas de notation scientifique)
+            # Binance refuse la notation scientifique comme '1e-05'
+            quantity_str = None
+            price_str = None
+            
+            if isinstance(quantity, float):
+                # Méthode robuste pour éviter la notation scientifique
+                quantity_str = f"{quantity:.20f}".rstrip('0').rstrip('.')
+                if 'e' in quantity_str.lower() or quantity < 0.000001:
+                    # Pour les très petits nombres, forcer le format avec assez de décimales
+                    quantity_str = f"{quantity:.10f}".rstrip('0').rstrip('.')
+                
+            # IMPORTANT: Convertir quantity et price en format décimal (pas de notation scientifique)
+            # Solution définitive : garder les chaînes formatées pour l'API Binance
+            quantity_str = None
+            price_str = None
+            
+            if isinstance(quantity, float):
+                # Forcer le format décimal et garder comme string
+                quantity_str = f"{quantity:.10f}".rstrip('0').rstrip('.')
+                if not quantity_str or quantity_str == '':
+                    quantity_str = f"{quantity:.10f}"
+                self.logger.info(f"🔢 Quantity formatée: {quantity} -> '{quantity_str}'")
+            
+            if price is not None and isinstance(price, float):
+                price_str = f"{price:.10f}".rstrip('0').rstrip('.')
+                if not price_str or price_str == '':
+                    price_str = f"{price:.10f}"
+                self.logger.info(f"🔢 Price formatée: {price} -> '{price_str}'")
+            
+            self.logger.info(f"🔢 Formats finaux - Qty: '{quantity_str}' (string), Prix: '{price_str}' (string)")
+            
             if self.binance_client:
                 if order_type.upper() == 'MARKET':
                     if side.upper() == 'BUY':
                         order = self.binance_client.order_market_buy(
                             symbol=symbol,
-                            quantity=quantity
+                            quantity=quantity_str or quantity  # Utiliser la string formatée
                         )
                     else:
                         order = self.binance_client.order_market_sell(
                             symbol=symbol,
-                            quantity=quantity
+                            quantity=quantity_str or quantity  # Utiliser la string formatée
                         )
                 elif order_type.upper() == 'TRAILING_STOP_MARKET':
-                    # Ordre trailing stop spécifique Binance
-                    order = self.binance_client.create_order(
-                        symbol=symbol,
-                        side=side,
-                        type='TRAILING_STOP_MARKET',
-                        quantity=quantity,
-                        callbackRate=kwargs.get('callbackRate', 1.0),  # Callback rate en %
-                        timeInForce='GTC'
-                    )
+                    # Ordre trailing stop spécifique Binance - paramètres limités
+                    params = {
+                        'symbol': symbol,
+                        'side': side,
+                        'type': 'TRAILING_STOP_MARKET',
+                        'quantity': quantity_str or quantity,  # Utiliser la string formatée
+                        'callbackRate': kwargs.get('callbackRate', 1.0)  # Callback rate en %
+                    }
+                    
+                    # Vérifier si timeInForce est supporté pour TRAILING_STOP_MARKET
+                    if kwargs.get('timeInForce'):
+                        params['timeInForce'] = kwargs.get('timeInForce')
+                    
+                    order = self.binance_client.create_order(**params)
                 else:
                     order = self.binance_client.create_order(
                         symbol=symbol,
                         side=side,
                         type=order_type,
-                        quantity=quantity,
-                        price=price,
+                        quantity=quantity_str or quantity,
+                        price=price_str or price,
                         **kwargs
                     )
                 
@@ -744,6 +830,225 @@ class DataFetcher:
             self.logger.error(f"❌ Erreur annulation ordre {symbol}: {e}")
             raise
     
+    async def place_oco_order(self, symbol: str, side: str, quantity: float, price: float, stopPrice: float, stopLimitPrice: float) -> Dict:
+        """Place un ordre OCO (One-Cancels-Other) : Take Profit + Stop Loss"""
+        try:
+            # Récupérer les informations du symbole pour validation
+            symbol_info = await self.get_symbol_info(symbol)
+            if not symbol_info:
+                raise Exception(f"Impossible de récupérer les infos du symbole {symbol}")
+            
+            # Arrondir tous les prix et quantités selon les filtres Binance
+            rounded_quantity = self.round_quantity(symbol_info, quantity)
+            rounded_price = self.round_price(symbol_info, price)
+            rounded_stop_price = self.round_price(symbol_info, stopPrice)
+            rounded_stop_limit_price = self.round_price(symbol_info, stopLimitPrice)
+            
+            self.logger.info(f"📏 OCO - Qty: {quantity:.8f} -> {rounded_quantity:.8f}")
+            self.logger.info(f"📏 OCO - TP: {price:.8f} -> {rounded_price:.8f}")
+            self.logger.info(f"📏 OCO - Stop: {stopPrice:.8f} -> {rounded_stop_price:.8f}")
+            self.logger.info(f"📏 OCO - StopLimit: {stopLimitPrice:.8f} -> {rounded_stop_limit_price:.8f}")
+            
+            if self.binance_client:
+                # Ordre OCO natif Binance
+                oco_order = self.binance_client.create_oco_order(
+                    symbol=symbol,
+                    side=side.upper(),
+                    quantity=rounded_quantity,
+                    price=rounded_price,                    # Take Profit price
+                    stopPrice=rounded_stop_price,            # Stop Loss trigger price
+                    stopLimitPrice=rounded_stop_limit_price,  # Stop Loss limit price
+                    stopLimitTimeInForce='GTC'
+                )
+                
+                self.logger.info(f"✅ Ordre OCO placé: {symbol} - TP: {rounded_price} | SL: {rounded_stop_price}")
+                return oco_order
+                
+            elif self.ccxt_client:
+                # CCXT ne supporte pas toujours OCO natif, fallback vers ordres séparés
+                self.logger.warning("⚠️ CCXT ne supporte pas OCO, création d'ordres séparés")
+                
+                # Créer Take Profit
+                tp_order = await self.ccxt_client.create_limit_sell_order(
+                    symbol.replace('USDC', '/USDC'),
+                    quantity,
+                    price
+                )
+                
+                # Créer Stop Loss
+                sl_order = await self.ccxt_client.create_stop_limit_sell_order(
+                    symbol.replace('USDC', '/USDC'),
+                    quantity,
+                    stopPrice,
+                    stopLimitPrice
+                )
+                
+                # Format OCO simulé
+                return {
+                    'orderListId': f"OCO_{tp_order['id']}_{sl_order['id']}",
+                    'contingencyType': 'OCO',
+                    'listStatusType': 'EXEC_STARTED',
+                    'listOrderStatus': 'EXECUTING',
+                    'orders': [
+                        {
+                            'orderId': tp_order['id'],
+                            'symbol': symbol,
+                            'type': 'LIMIT',
+                            'side': side.upper(),
+                            'amount': str(quantity),
+                            'price': str(price)
+                        },
+                        {
+                            'orderId': sl_order['id'],
+                            'symbol': symbol,
+                            'type': 'STOP_LOSS_LIMIT',
+                            'side': side.upper(),
+                            'amount': str(quantity),
+                            'stopPrice': str(stopPrice)
+                        }
+                    ]
+                }
+            
+            else:
+                raise Exception("Aucun client API disponible pour OCO")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur placement OCO {symbol}: {e}")
+            raise
+    
+    async def get_open_orders(self, symbol: str) -> List[Dict]:
+        """Récupère tous les ordres ouverts pour un symbole"""
+        try:
+            if self.binance_client:
+                orders = self.binance_client.get_open_orders(symbol=symbol)
+                self.logger.info(f"📋 {len(orders)} ordres ouverts trouvés pour {symbol}")
+                return orders
+            
+            elif self.ccxt_client:
+                orders = await self.ccxt_client.fetch_open_orders(symbol.replace('USDC', '/USDC'))
+                
+                # Conversion au format Binance
+                converted_orders = []
+                for order in orders:
+                    converted_order = {
+                        'symbol': symbol,
+                        'orderId': order['id'],
+                        'orderListId': order.get('info', {}).get('orderListId', -1),
+                        'clientOrderId': order.get('clientOrderId', ''),
+                        'price': str(order['price'] or 0),
+                        'origQty': str(order['amount']),
+                        'executedQty': str(order['filled']),
+                        'cummulativeQuoteQty': str(order['cost']),
+                        'status': order['status'].upper(),
+                        'timeInForce': 'GTC',
+                        'type': order['type'].upper(),
+                        'side': order['side'].upper(),
+                        'stopPrice': str(order.get('stopPrice', 0)),
+                        'icebergQty': '0',
+                        'time': int(order['timestamp']),
+                        'updateTime': int(order['timestamp']),
+                        'isWorking': True
+                    }
+                    converted_orders.append(converted_order)
+                
+                self.logger.info(f"📋 {len(converted_orders)} ordres ouverts trouvés pour {symbol}")
+                return converted_orders
+            
+            else:
+                raise Exception("Aucun client API disponible")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur récupération ordres ouverts {symbol}: {e}")
+            return []
+
+    async def cancel_all_orders(self, symbol: str) -> Dict:
+        """Annule tous les ordres ouverts pour un symbole"""
+        try:
+            cancelled_orders = []
+            errors = []
+            
+            if self.binance_client:
+                # Récupérer tous les ordres ouverts
+                open_orders = await self.get_open_orders(symbol)
+                
+                if not open_orders:
+                    self.logger.info(f"📋 Aucun ordre ouvert à annuler pour {symbol}")
+                    return {'cancelled': [], 'errors': [], 'count': 0}
+                
+                self.logger.info(f"🗑️ Annulation de {len(open_orders)} ordres pour {symbol}")
+                
+                for order in open_orders:
+                    try:
+                        order_id = order['orderId']
+                        order_list_id = order.get('orderListId', -1)
+                        
+                        # Si c'est un ordre OCO (orderListId != -1), annuler la liste d'ordres
+                        if order_list_id and order_list_id != -1:
+                            try:
+                                result = self.binance_client.cancel_order_list(
+                                    symbol=symbol,
+                                    orderListId=order_list_id
+                                )
+                                cancelled_orders.append({
+                                    'type': 'OCO_LIST',
+                                    'orderListId': order_list_id,
+                                    'result': result
+                                })
+                                self.logger.info(f"✅ Liste OCO {order_list_id} annulée")
+                            except Exception as e:
+                                # Si l'annulation OCO échoue, essayer ordre individuel
+                                self.logger.warning(f"⚠️ Échec annulation OCO {order_list_id}, essai ordre individuel: {e}")
+                                individual_result = await self.cancel_order(symbol, str(order_id))
+                                cancelled_orders.append({
+                                    'type': 'INDIVIDUAL',
+                                    'orderId': order_id,
+                                    'result': individual_result
+                                })
+                        else:
+                            # Ordre individuel
+                            result = await self.cancel_order(symbol, str(order_id))
+                            cancelled_orders.append({
+                                'type': 'INDIVIDUAL',
+                                'orderId': order_id,
+                                'result': result
+                            })
+                            self.logger.info(f"✅ Ordre {order_id} annulé")
+                            
+                    except Exception as e:
+                        error_msg = f"Erreur annulation ordre {order.get('orderId', 'N/A')}: {e}"
+                        errors.append(error_msg)
+                        self.logger.error(f"❌ {error_msg}")
+                
+            elif self.ccxt_client:
+                # Utiliser CCXT pour annuler tous les ordres
+                try:
+                    result = await self.ccxt_client.cancel_all_orders(symbol.replace('USDC', '/USDC'))
+                    cancelled_orders = [{'type': 'CCXT_BULK', 'result': result}]
+                    self.logger.info(f"✅ Tous les ordres {symbol} annulés via CCXT")
+                except Exception as e:
+                    errors.append(f"Erreur annulation CCXT: {e}")
+                    self.logger.error(f"❌ Erreur annulation CCXT {symbol}: {e}")
+            
+            else:
+                raise Exception("Aucun client API disponible")
+            
+            result = {
+                'cancelled': cancelled_orders,
+                'errors': errors,
+                'count': len(cancelled_orders)
+            }
+            
+            if errors:
+                self.logger.warning(f"⚠️ {len(errors)} erreurs lors de l'annulation pour {symbol}")
+            else:
+                self.logger.info(f"✅ {len(cancelled_orders)} ordres annulés avec succès pour {symbol}")
+            
+            return result
+                
+        except Exception as e:
+            self.logger.error(f"❌ Erreur annulation ordres {symbol}: {e}")
+            return {'cancelled': [], 'errors': [str(e)], 'count': 0}
+
     async def get_order_status(self, symbol: str, order_id: str) -> Dict:
         """Récupère le statut d'un ordre"""
         try:

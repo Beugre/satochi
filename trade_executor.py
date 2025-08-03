@@ -48,34 +48,37 @@ class Trade:
     entry_price: float
     quantity: float
     capital_engaged: float
-    stop_loss: float
     take_profit: float
+    stop_loss: float
     timestamp: datetime
-    status: TradeStatus
     
-    # Optionnels
+    # Données de signal (ajout pour compatibilité)
+    rsi_value: Optional[float] = None
+    signal_data: Optional[dict] = None
+    
+    # Ordres
+    entry_order_id: Optional[str] = None
+    take_profit_order_id: Optional[str] = None
+    stop_loss_order_id: Optional[str] = None
+    trailing_stop_order_id: Optional[str] = None
+    oco_order_id: Optional[str] = None  # ID du groupe OCO
+    
+    # Statut
+    status: TradeStatus = TradeStatus.PENDING
     exit_price: Optional[float] = None
     exit_timestamp: Optional[datetime] = None
     exit_reason: Optional[ExitReason] = None
+    
+    # Performance
     pnl_amount: Optional[float] = None
     pnl_percent: Optional[float] = None
-    fees: Optional[float] = None
     duration_seconds: Optional[int] = None
+    fees: Optional[float] = None
     
-    # Données techniques
-    rsi_value: Optional[float] = None
-    entry_conditions: Optional[Dict[str, Any]] = None
-    breakout_detected: Optional[bool] = None
-    
-    # Ordres Binance
-    entry_order_id: Optional[str] = None
-    stop_loss_order_id: Optional[str] = None
-    take_profit_order_id: Optional[str] = None
-    
-    # Trailing Stop
-    trailing_stop_order_id: Optional[str] = None
+    # Trailing stop
     trailing_stop_active: bool = False
     trailing_stop_pending: bool = False
+    highest_price: Optional[float] = None
     
     @property
     def duration_formatted(self) -> str:
@@ -279,12 +282,24 @@ class TradeExecutor:
             ticker = await self.data_fetcher.get_ticker_price(pair)
             current_price = float(ticker['price'])
             
+            # Récupérer les informations du symbole pour l'arrondi
+            symbol_info = await self.data_fetcher.get_symbol_info(pair)
+            if not symbol_info:
+                raise Exception(f"Impossible de récupérer les infos du symbole {pair}")
+            
             # Calcul de la quantité
             quantity = position_size_usdc / current_price
+            rounded_quantity = self.data_fetcher.round_quantity(symbol_info, quantity)
             
             # Calcul stop loss et take profit
             stop_loss_price = current_price * (1 - self.config.STOP_LOSS_PERCENT / 100)
             take_profit_price = current_price * (1 + self.config.TAKE_PROFIT_PERCENT / 100)
+            
+            # Arrondir les prix selon les règles Binance
+            rounded_stop_loss = self.data_fetcher.round_price(symbol_info, stop_loss_price)
+            rounded_take_profit = self.data_fetcher.round_price(symbol_info, take_profit_price)
+            
+            self.logger.info(f"💰 Prix calculés - Entry: {current_price:.8f}, SL: {rounded_stop_loss:.8f}, TP: {rounded_take_profit:.8f}")
             
             # Génération ID trade
             trade_id = f"{pair}_{int(time.time())}"
@@ -295,15 +310,14 @@ class TradeExecutor:
                 pair=pair,
                 side="BUY",
                 entry_price=current_price,
-                quantity=quantity,
+                quantity=rounded_quantity,
                 capital_engaged=position_size_usdc,
-                stop_loss=stop_loss_price,
-                take_profit=take_profit_price,
+                stop_loss=rounded_stop_loss,
+                take_profit=rounded_take_profit,
                 timestamp=datetime.now(),
                 status=TradeStatus.PENDING,
                 rsi_value=analysis_data.get('rsi_value', 0),
-                entry_conditions=analysis_data.get('entry_conditions', {}),
-                breakout_detected=analysis_data.get('breakout_detected', False)
+                signal_data=analysis_data
             )
             
             # Exécution de l'ordre d'achat
@@ -392,106 +406,134 @@ class TradeExecutor:
             return False
     
     async def _setup_exit_orders(self, trade: Trade):
-        """Met en place les ordres de sortie (SL/TP) automatiques dans Binance"""
+        """Met en place les ordres de sortie avec OCO (One-Cancels-Other)"""
         try:
-            # CORRECTION: Placement des ordres SL/TP automatiques dans Binance
+            # Configuration OCO pour Take Profit + Trailing Stop
+            
+            # Récupérer les informations du symbole pour l'arrondi des prix
+            symbol_info = await self.data_fetcher.get_symbol_info(trade.pair)
+            if not symbol_info:
+                raise Exception(f"Impossible de récupérer les infos du symbole {trade.pair}")
+            
+            # Arrondir les prix selon les règles Binance
+            rounded_tp = self.data_fetcher.round_price(symbol_info, trade.take_profit)
+            rounded_sl = self.data_fetcher.round_price(symbol_info, trade.stop_loss)
+            rounded_qty = self.data_fetcher.round_quantity(symbol_info, trade.quantity)
+            
+            self.logger.info(f"📏 Prix arrondis - TP: {trade.take_profit:.8f} -> {rounded_tp:.8f}, SL: {trade.stop_loss:.8f} -> {rounded_sl:.8f}")
+            
+            # Configuration OCO : Take Profit + Trailing Stop en UN SEUL ordre
+            self.logger.info(f"🔄 Configuration OCO : TP={rounded_tp:.6f} + Trailing Stop={self.config.TRAILING_STOP_DISTANCE}%")
+            
+            try:
+                # Essayer l'ordre OCO avec trailing stop
+                oco_order = await self.data_fetcher.place_oco_order(
+                    symbol=trade.pair,
+                    side="SELL",
+                    quantity=rounded_qty,
+                    
+                    # Take Profit (ordre limite)
+                    price=rounded_tp,
+                    
+                    # Stop Loss avec trailing
+                    stopPrice=rounded_sl,
+                    stopLimitPrice=rounded_sl * 0.995,  # Prix limite -0.5% du stop
+                )
+                
+                # Enregistrer les IDs des ordres OCO
+                if 'orderListId' in oco_order:
+                    trade.oco_order_id = oco_order['orderListId']
+                    orders = oco_order.get('orders', [])
+                    if len(orders) >= 2:
+                        trade.take_profit_order_id = orders[0].get('orderId')  # Premier ordre = TP
+                        trade.trailing_stop_order_id = orders[1].get('orderId')  # Deuxième ordre = Stop
+                        trade.trailing_stop_active = True
+                        
+                        self.logger.info(f"✅ OCO créé avec succès!")
+                        self.logger.info(f"   📈 Take Profit: {rounded_tp:.6f} USDC (ID: {trade.take_profit_order_id})")
+                        self.logger.info(f"   🛡️ Stop Loss: {rounded_sl:.6f} USDC (ID: {trade.trailing_stop_order_id})")
+                        self.logger.info(f"   🔗 OCO Group: {trade.oco_order_id}")
+                        return
+                
+            except Exception as oco_error:
+                self.logger.warning(f"⚠️ OCO échoué: {oco_error}")
+                # Fallback: ordres séparés
+                await self._setup_fallback_orders(trade, rounded_tp, rounded_sl, rounded_qty)
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur setup ordres de sortie: {e}")
+            # Fallback: gestion manuelle si ordres automatiques échouent
+            self.logger.warning("⚠️ Passage en gestion manuelle des SL/TP")
+    
+    async def _setup_fallback_orders(self, trade: Trade, rounded_tp: float, rounded_sl: float, rounded_qty: float):
+        """Fallback : ordres séparés si OCO échoue"""
+        try:
+            self.logger.info("🔄 Fallback: création d'ordres séparés...")
             
             # 1. Ordre Take Profit (LIMIT)
             tp_order = await self.data_fetcher.place_order(
                 symbol=trade.pair,
                 side="SELL",
                 order_type="LIMIT",
-                quantity=trade.quantity,
-                price=trade.take_profit,
-                timeInForce="GTC"  # Good Till Cancelled
+                quantity=rounded_qty,
+                price=rounded_tp,
+                timeInForce="GTC"
             )
             trade.take_profit_order_id = tp_order['orderId']
-            self.logger.info(f"✅ TP automatique placé: {trade.take_profit:.6f} USDC (ID: {tp_order['orderId']})")
+            self.logger.info(f"✅ TP automatique placé: {rounded_tp:.6f} USDC (ID: {tp_order['orderId']})")
             
-            # 2. Ordre Stop Loss (STOP_MARKET)
-            sl_order = await self.data_fetcher.place_order(
-                symbol=trade.pair,
-                side="SELL",
-                order_type="STOP_MARKET",
-                quantity=trade.quantity,
-                stopPrice=trade.stop_loss
-            )
-            trade.stop_loss_order_id = sl_order['orderId']
-            self.logger.info(f"✅ SL automatique placé: {trade.stop_loss:.6f} USDC (ID: {sl_order['orderId']})")
-            
-            # 3. Configuration du Trailing Stop (si activé)
-            if self.trading_config.TRAILING_STOP_ENABLED:
-                await self._setup_trailing_stop(trade)
-            
-            self.logger.info(f"📊 Ordres automatiques Binance configurés: SL={trade.stop_loss:.6f}, TP={trade.take_profit:.6f}")
-            
-        except Exception as e:
-            self.logger.error(f"❌ Erreur setup ordres automatiques Binance: {e}")
-            # Fallback: gestion manuelle si ordres automatiques échouent
-            self.logger.warning("⚠️ Passage en gestion manuelle des SL/TP")
-    
-    async def _setup_trailing_stop(self, trade: Trade):
-        """Configure le trailing stop automatique Binance"""
-        try:
-            # Calculer le seuil d'activation du trailing stop
-            activation_price = trade.entry_price * (1 + self.trading_config.TRAILING_STOP_TRIGGER / 100)
-            
-            # Attendre que le prix atteigne le seuil d'activation
-            current_price = await self.data_fetcher.get_current_price(trade.pair)
-            
-            if current_price >= activation_price:
-                # Placer l'ordre trailing stop
-                trailing_order = await self.data_fetcher.place_order(
+            # 2. Ordre Stop Loss/Trailing Stop
+            if self.config.TRAILING_STOP_ENABLED:
+                try:
+                    # Essayer TRAILING_STOP_MARKET
+                    trailing_order = await self.data_fetcher.place_order(
+                        symbol=trade.pair,
+                        side="SELL",
+                        order_type="TRAILING_STOP_MARKET",
+                        quantity=rounded_qty,
+                        callbackRate=self.config.TRAILING_STOP_DISTANCE
+                    )
+                    trade.trailing_stop_order_id = trailing_order['orderId']
+                    trade.trailing_stop_active = True
+                    self.logger.info(f"✅ Trailing Stop placé: {self.config.TRAILING_STOP_DISTANCE}% (ID: {trailing_order['orderId']})")
+                    
+                except Exception as trailing_error:
+                    self.logger.warning(f"⚠️ TRAILING_STOP_MARKET échoué: {trailing_error}")
+                    # Fallback final: STOP_LOSS_LIMIT
+                    sl_order = await self.data_fetcher.place_order(
+                        symbol=trade.pair,
+                        side="SELL",
+                        order_type="STOP_LOSS_LIMIT",
+                        quantity=rounded_qty,
+                        price=rounded_sl * 0.995,
+                        stopPrice=rounded_sl,
+                        timeInForce="GTC"
+                    )
+                    trade.stop_loss_order_id = sl_order['orderId']
+                    self.logger.info(f"✅ Stop Loss Limit placé: {rounded_sl:.6f} USDC (ID: {sl_order['orderId']})")
+            else:
+                # Stop Loss fixe seulement
+                sl_order = await self.data_fetcher.place_order(
                     symbol=trade.pair,
                     side="SELL",
-                    order_type="TRAILING_STOP_MARKET",
-                    quantity=trade.quantity,
-                    callbackRate=self.trading_config.TRAILING_STOP_DISTANCE
+                    order_type="STOP_LOSS_LIMIT",
+                    quantity=rounded_qty,
+                    price=rounded_sl * 0.995,
+                    stopPrice=rounded_sl,
+                    timeInForce="GTC"
                 )
-                
-                # Annuler l'ancien stop loss fixe
-                if trade.stop_loss_order_id:
-                    try:
-                        await self.data_fetcher.cancel_order(trade.pair, trade.stop_loss_order_id)
-                        self.logger.info(f"🗑️ Stop Loss fixe annulé (remplacé par trailing)")
-                    except Exception as e:
-                        self.logger.warning(f"⚠️ Erreur annulation SL fixe: {e}")
-                
-                trade.trailing_stop_order_id = trailing_order['orderId']
-                trade.trailing_stop_active = True
-                
-                self.logger.info(f"🔄 Trailing Stop activé: Delta {self.trading_config.TRAILING_STOP_DISTANCE}% (ID: {trailing_order['orderId']})")
-            else:
-                # Programmer une vérification ultérieure
-                trade.trailing_stop_pending = True
-                self.logger.info(f"⏳ Trailing Stop en attente - Prix cible: {activation_price:.6f}")
+                trade.stop_loss_order_id = sl_order['orderId']
+                self.logger.info(f"✅ Stop Loss fixe placé: {rounded_sl:.6f} USDC (ID: {sl_order['orderId']})")
                 
         except Exception as e:
-            self.logger.error(f"❌ Erreur setup trailing stop: {e}")
-    
-    async def _check_trailing_stop_activation(self, trade: Trade):
-        """Vérifie si le trailing stop doit être activé"""
-        try:
-            if not trade.trailing_stop_pending or trade.trailing_stop_active:
-                return
-            
-            current_price = await self.data_fetcher.get_current_price(trade.pair)
-            activation_price = trade.entry_price * (1 + self.trading_config.TRAILING_STOP_TRIGGER / 100)
-            
-            if current_price >= activation_price:
-                await self._setup_trailing_stop(trade)
-                
-        except Exception as e:
-            self.logger.error(f"❌ Erreur vérification trailing stop: {e}")
+            self.logger.error(f"❌ Erreur fallback orders: {e}")
+            self.logger.warning("⚠️ Pas d'ordres automatiques - surveillance manuelle requise")
     
     async def monitor_positions(self):
-        """Surveille les positions ouvertes"""
+        """Surveille les positions ouvertes (OCO gère automatiquement les sorties)"""
         for trade_id, trade in list(self.active_trades.items()):
             try:
-                # Vérifier activation du trailing stop si en attente
-                if self.trading_config.TRAILING_STOP_ENABLED:
-                    await self._check_trailing_stop_activation(trade)
-                
+                # Avec OCO, la sortie est automatique, on vérifie juste le statut
                 await self._check_exit_conditions(trade)
             except Exception as e:
                 self.logger.error(f"❌ Erreur monitoring {trade.pair}: {e}")
@@ -694,6 +736,186 @@ class TradeExecutor:
             except Exception as e:
                 self.logger.error(f"❌ Erreur fermeture forcée {trade.pair}: {e}")
     
+    async def cancel_open_orders_for_symbol(self, symbol: str) -> Dict[str, Any]:
+        """Annule tous les ordres ouverts pour un symbole et retourne les infos"""
+        try:
+            self.logger.info(f"🗑️ Annulation des ordres ouverts pour {symbol}")
+            
+            # Récupérer les ordres ouverts
+            open_orders = await self.data_fetcher.get_open_orders(symbol)
+            
+            if not open_orders:
+                self.logger.info(f"📋 Aucun ordre ouvert pour {symbol}")
+                return {
+                    'success': True,
+                    'cancelled_count': 0,
+                    'orders_before': [],
+                    'errors': []
+                }
+            
+            self.logger.info(f"📋 {len(open_orders)} ordres trouvés pour {symbol}")
+            for order in open_orders:
+                self.logger.info(f"  • Ordre {order['orderId']}: {order['type']} {order['side']} {order['origQty']} @ {order['price']}")
+            
+            # Annuler tous les ordres
+            result = await self.data_fetcher.cancel_all_orders(symbol)
+            
+            success = len(result['errors']) == 0
+            cancelled_count = result['count']
+            
+            if success and cancelled_count > 0:
+                self.logger.info(f"✅ {cancelled_count} ordres annulés avec succès pour {symbol}")
+                # Attendre un peu pour que Binance libère la balance
+                await asyncio.sleep(2)
+            elif result['errors']:
+                self.logger.error(f"❌ Erreurs lors de l'annulation pour {symbol}: {result['errors']}")
+            
+            return {
+                'success': success,
+                'cancelled_count': cancelled_count,
+                'orders_before': open_orders,
+                'cancelled_orders': result['cancelled'],
+                'errors': result['errors']
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur annulation ordres {symbol}: {e}")
+            return {
+                'success': False,
+                'cancelled_count': 0,
+                'orders_before': [],
+                'errors': [str(e)]
+            }
+    
+    async def execute_sell_order(self, pair: str, quantity: float) -> Dict[str, Any]:
+        """Exécute un ordre de vente pour fermer une position"""
+        try:
+            # Chercher le trade correspondant
+            trade = self.active_trades.get(pair)
+            
+            # Si pas de trade dans active_trades, créer un trade temporaire pour la fermeture
+            if not trade:
+                self.logger.warning(f"⚠️ Trade {pair} pas trouvé dans active_trades, fermeture directe via Binance")
+                
+                # ÉTAPE 1: Vérifier et annuler les ordres ouverts qui peuvent locker la balance
+                cancel_result = await self.cancel_open_orders_for_symbol(pair)
+                if cancel_result['cancelled_count'] > 0:
+                    self.logger.info(f"🗑️ {cancel_result['cancelled_count']} ordres annulés pour libérer la balance")
+                
+                # ÉTAPE 2: Récupérer le prix actuel
+                ticker = await self.data_fetcher.get_ticker_price(pair)
+                current_price = float(ticker['price'])
+                
+                # ÉTAPE 3: Vérifier le balance APRÈS annulation des ordres
+                try:
+                    base_asset = pair.replace('USDC', '').replace('USDT', '').replace('BTC', '')
+                    if 'USDC' in pair:
+                        base_asset = pair.replace('USDC', '')
+                    elif 'USDT' in pair:
+                        base_asset = pair.replace('USDT', '')
+                    
+                    account_info = self.data_fetcher.binance_client.get_account()
+                    balances = {b['asset']: {'free': float(b['free']), 'locked': float(b['locked'])} for b in account_info['balances']}
+                    balance_info = balances.get(base_asset, {'free': 0, 'locked': 0})
+                    available_balance = balance_info['free']
+                    locked_balance = balance_info['locked']
+                    
+                    self.logger.info(f"💰 Balance {base_asset}: {available_balance} libre, {locked_balance} lockée")
+                    self.logger.info(f"📊 Tentative vente quantité: {quantity}")
+                    
+                    # Si la balance est encore insuffisante et qu'il y a du locked, attendre un peu plus
+                    if available_balance < quantity and locked_balance > 0:
+                        self.logger.info(f"⏳ Balance encore lockée, attente supplémentaire...")
+                        await asyncio.sleep(3)
+                        
+                        # Re-vérifier la balance
+                        account_info = self.data_fetcher.binance_client.get_account()
+                        balances = {b['asset']: {'free': float(b['free']), 'locked': float(b['locked'])} for b in account_info['balances']}
+                        balance_info = balances.get(base_asset, {'free': 0, 'locked': 0})
+                        available_balance = balance_info['free']
+                        locked_balance = balance_info['locked']
+                        self.logger.info(f"💰 Balance après attente {base_asset}: {available_balance} libre, {locked_balance} lockée")
+                    
+                    if available_balance < quantity:
+                        self.logger.warning(f"⚠️ Balance insuffisant! Disponible: {available_balance}, Requis: {quantity}")
+                        if available_balance > 0:
+                            # Utiliser tout le balance disponible moins une petite marge pour les frais
+                            safe_balance = available_balance * 0.999  # 0.1% de marge pour les frais
+                            quantity = safe_balance
+                            self.logger.info(f"🔄 Ajustement quantité à la balance disponible: {quantity}")
+                        else:
+                            self.logger.error(f"❌ Aucun balance disponible pour {base_asset}")
+                            return {
+                                'success': False,
+                                'error': f'Aucun balance disponible: {available_balance} (locked: {locked_balance})',
+                                'price': 0
+                            }
+                        
+                except Exception as e:
+                    self.logger.warning(f"⚠️ Erreur vérification balance: {e}")
+                
+                # ÉTAPE 4: Arrondir selon les règles Binance
+                symbol_info = await self.data_fetcher.get_symbol_info(pair)
+                if symbol_info:
+                    rounded_quantity = self.data_fetcher.round_quantity(symbol_info, quantity)
+                else:
+                    rounded_quantity = quantity
+                
+                # ÉTAPE 5: Vérification de la valeur minimum (dust threshold)
+                trade_value_usdc = rounded_quantity * current_price
+                if trade_value_usdc < self.config.DUST_THRESHOLD_USDC:
+                    self.logger.warning(f"💸 Montant trop petit (dust): {trade_value_usdc:.4f} USDC < {self.config.DUST_THRESHOLD_USDC} USDC")
+                    self.logger.info(f"�️ Ignorer la vente de {rounded_quantity} {base_asset} (valeur: {trade_value_usdc:.4f} USDC)")
+                    return {
+                        'success': True,  # Considérer comme succès pour éviter les erreurs répétées
+                        'price': current_price,
+                        'quantity': 0,  # Quantité 0 pour indiquer qu'aucune vente n'a eu lieu
+                        'pair': pair,
+                        'reason': 'dust_threshold'
+                    }
+                
+                self.logger.info(f"�🔄 Tentative ordre SELL {pair}: quantité {rounded_quantity} (valeur: {trade_value_usdc:.4f} USDC)")
+                
+                # Exécuter directement l'ordre de vente sur Binance
+                order = await self.data_fetcher.place_order(
+                    symbol=pair,
+                    side="SELL",
+                    order_type="MARKET",
+                    quantity=rounded_quantity
+                )
+                
+                self.logger.info(f"✅ Ordre de vente direct exécuté pour {pair}: {order}")
+                
+                return {
+                    'success': True,
+                    'price': current_price,
+                    'quantity': rounded_quantity,
+                    'pair': pair,
+                    'order_id': order.get('orderId')
+                }
+            
+            # Si le trade existe dans active_trades, utiliser la méthode normale
+            ticker = await self.data_fetcher.get_ticker_price(pair)
+            current_price = float(ticker['price'])
+            
+            # Fermer le trade
+            await self._close_trade(trade, current_price, ExitReason.MANUAL)
+            
+            return {
+                'success': True,
+                'price': current_price,
+                'quantity': quantity,
+                'pair': pair
+            }
+            
+        except Exception as e:
+            self.logger.error(f"❌ Erreur execution ordre vente {pair}: {e}")
+            return {
+                'success': False,
+                'error': str(e),
+                'price': 0
+            }
+    
     async def get_position_status(self) -> Dict[str, Any]:
         """Retourne le statut des positions"""
         try:
@@ -747,7 +969,14 @@ class TradeExecutor:
         try:
             # Firebase
             if self.firebase_logger:
-                await self.firebase_logger.log_trade_open(asdict(trade))
+                await self.firebase_logger.log_trade_open(
+                    pair=trade.pair,
+                    entry_price=trade.entry_price,
+                    quantity=trade.quantity,
+                    take_profit=trade.take_profit,
+                    stop_loss=trade.stop_loss,
+                    analysis_data=trade.signal_data or {}
+                )
             
             # Telegram
             if self.telegram_notifier:
@@ -779,12 +1008,11 @@ class TradeExecutor:
         """Log une erreur"""
         try:
             if self.firebase_logger:
-                await self.firebase_logger.log_error({
-                    'component': component,
-                    'message': message,
-                    'details': details,
-                    'level': 'ERROR'
-                })
+                await self.firebase_logger.log_error(
+                    error_type=component,
+                    error_message=message,
+                    context=details
+                )
             
             if self.telegram_notifier:
                 await self.telegram_notifier.send_error_notification({
