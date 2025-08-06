@@ -66,9 +66,11 @@ class RSIScalpingBot:
         self.consecutive_losses = 0
         self.loss_streak_pause_until = None
         self.daily_pnl = 0.0
+        # Compteurs et statistiques
         self.trades_today = 0
         self.trades_this_hour = 0
         self.last_hour_reset = datetime.now().hour
+        self.last_daily_reset_date = datetime.now().strftime('%Y-%m-%d')  # Pour tracker la dernière remise à zéro quotidienne
         
         # Positions ouvertes
         self.open_positions = {}
@@ -96,6 +98,7 @@ class RSIScalpingBot:
                 'trades_today': self.trades_today,
                 'trades_this_hour': self.trades_this_hour,
                 'last_hour_reset': self.last_hour_reset,
+                'last_daily_reset_date': self.last_daily_reset_date,
                 'open_positions': {
                     pair: {
                         'entry_price': pos['entry_price'],
@@ -154,6 +157,14 @@ class RSIScalpingBot:
             self.trades_today = state_data.get('trades_today', 0)
             self.trades_this_hour = state_data.get('trades_this_hour', 0)
             self.last_hour_reset = state_data.get('last_hour_reset', datetime.now().hour)
+            self.last_daily_reset_date = state_data.get('last_daily_reset_date', datetime.now().strftime('%Y-%m-%d'))
+            
+            # Vérifier si on doit faire une remise à zéro quotidienne
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            if self.last_daily_reset_date != current_date:
+                self.logger.info(f"🔄 Nouveau jour détecté ({self.last_daily_reset_date} -> {current_date}) - Remise à zéro des statistiques quotidiennes")
+                self.reset_daily_counters()
+                self.last_daily_reset_date = current_date
             
             # Restaurer loss_streak_pause_until
             if state_data.get('loss_streak_pause_until'):
@@ -197,6 +208,16 @@ class RSIScalpingBot:
         """Wrapper synchrone pour l'initialisation"""
         # Cette méthode sera appelée de manière asynchrone dans initialize_modules
         pass
+    
+    def reset_daily_counters(self):
+        """Remet à zéro les compteurs quotidiens"""
+        self.logger.info("🔄 Remise à zéro des compteurs quotidiens")
+        self.trades_today = 0
+        self.daily_pnl = 0.0
+        # Appeler également la méthode de reset du trade_executor si elle existe
+        if hasattr(self.trade_executor, 'reset_daily_stats'):
+            self.trade_executor.reset_daily_stats()
+        self.logger.info("✅ Compteurs quotidiens remis à zéro")
     
     def setup_logging(self):
         """Configuration du système de logging"""
@@ -888,6 +909,13 @@ class RSIScalpingBot:
                     self.logger.info(f"🔄 Boucle #{self.loop_counter} - Positions ouvertes: {len(self.open_positions)} - Capital: {await self.get_current_capital():.2f} USDC")
                     # Sauvegarde périodique de l'état
                     await self.save_state()
+                    
+                    # Vérification du changement de jour pour reset des compteurs
+                    current_date = datetime.now().strftime('%Y-%m-%d')
+                    if self.last_daily_reset_date != current_date:
+                        self.logger.info(f"🌅 Nouveau jour détecté dans la boucle principale ({self.last_daily_reset_date} -> {current_date})")
+                        self.reset_daily_counters()
+                        self.last_daily_reset_date = current_date
                 
                 # Vérification des conditions de trading
                 if not await self.check_trading_conditions():
